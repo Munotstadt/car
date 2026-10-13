@@ -33,7 +33,7 @@ const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
       odometer_km REAL, soc_start REAL, soc_end REAL, range_start REAL, range_end REAL,
       kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature REAL,
       notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
-      placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT,
+      charging_type TEXT, placeholder2 TEXT, placeholder3 TEXT,
       created_at_utc TEXT NOT NULL DEFAULT (datetime('now')), modified_at_utc TEXT)`;
 
 let schemaReady = false;
@@ -54,6 +54,8 @@ async function ensureSchema(db) {
   if (!col) await db.prepare("ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT").run();
   const mod = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'modified_at_utc'").first();
   if (!mod) await db.prepare("ALTER TABLE car_charging_tbl ADD COLUMN modified_at_utc TEXT").run();
+  const ph1 = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'placeholder1'").first();
+  if (ph1) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder1 TO charging_type").run();
   schemaReady = true;
 }
 
@@ -104,6 +106,11 @@ function parseActivityHA(v) {
   if (t !== "Home" && t !== "External") throw new Error("Ungültige Activity (nur Home oder External)");
   return t;
 }
+function parseChargingType(v) {
+  const t = parseText(v);
+  if (t !== null && t !== "AC" && t !== "DC") throw new Error("Ungültiger Ladetyp (nur AC oder DC)");
+  return t;
+}
 function parseDuration(v) {
   const t = parseText(v);
   if (t !== null && !/^\d{1,3}:[0-5]\d$/.test(t)) throw new Error("Ungültige Dauer (Format hh:mm)");
@@ -114,7 +121,7 @@ const CHG_FIELDS = {
   odometer_km: parseNum, soc_start: parseNum, soc_end: parseNum, range_start: parseNum, range_end: parseNum,
   kwh_charged: parseNum, costs_chf: parseNum, "duration_hh:mm": parseDuration, temperature: parseNum,
   notes: parseText, location: parseText, station_name: parseText, charging_card: parseText,
-  placeholder1: parseText, placeholder2: parseText, placeholder3: parseText,
+  charging_type: parseChargingType, placeholder2: parseText, placeholder3: parseText,
 };
 const UTC_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
