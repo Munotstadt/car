@@ -3,8 +3,10 @@
 const NAV = [
   ["/", "Dashboard"],
   ["/trips", "Trips"],
+  ["/charging", "Charging"],
   ["/statistics", "Statistics"],
   ["/activities", "Activities"],
+  ["/collector", "Collector"],
 ];
 
 function renderHeader(activePath) {

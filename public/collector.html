@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Munotstadt Car · Collector</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="header"></div>
+<div class="wrap wide">
+  <h1>Collector-Log</h1>
+  <div class="sub" id="subline">Lade Log…</div>
+
+  <div class="toolbar">
+    <div class="row">
+      <div class="field"><label for="fFrom">Von (Zürich)</label><input id="fFrom" type="date"></div>
+      <div class="field"><label for="fTo">Bis inkl. (Zürich)</label><input id="fTo" type="date"></div>
+      <div class="field"><label for="fSrc">Source</label><select id="fSrc"><option value="">Alle</option></select></div>
+      <div class="field"><label for="fOnly">Anzeige</label><select id="fOnly"><option value="">Alle Zeilen</option><option value="gaps">Nur mit fehlenden Werten</option></select></div>
+      <button onclick="reload()">Filtern</button>
+      <button class="ghost" onclick="resetFilter()">Zurücksetzen</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th class="num">ID</th><th>Zeit (Zürich)</th><th>Zeit (UTC)</th>
+        <th class="num">Odometer</th><th class="num">SoC %</th><th class="num">Range km</th>
+        <th class="num">Ladeleistung kW</th><th>Ladestatus</th><th>Stecker</th>
+        <th class="num">Ziel-SoC %</th><th class="num">Rest min</th>
+        <th>Adresse</th><th>Parkstatus</th><th>Source</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="toolbar"><button class="ghost" id="moreBtn" onclick="more()" style="display:none">Weitere laden</button><span class="hint-txt" id="countTxt"></span></div>
+  <div class="hint-txt">Nur Anzeige. Quelle: Tabelle <code>skoda_collector_tbl</code> (D1 «car»), neueste zuerst. Die Zeitfilter gelten in Zürcher Zeit, die Spalte «Zeit (UTC)» zeigt den gespeicherten Wert.</div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+renderHeader("/collector");
+const PAGE = 200;
+let rows = [], total = 0, sourcesLoaded = false;
+
+function query(offset) {
+  const q = new URLSearchParams({ limit: PAGE, offset });
+  const from = document.getElementById("fFrom").value, to = document.getElementById("fTo").value;
+  if (from) q.set("from", zurichInputToUtc(from + "T00:00"));
+  if (to) { const d = new Date(Date.parse(to + "T12:00:00Z") + 86400000).toISOString().slice(0, 10); q.set("to", zurichInputToUtc(d + "T00:00")); }
+  if (document.getElementById("fSrc").value) q.set("source", document.getElementById("fSrc").value);
+  if (document.getElementById("fOnly").value) q.set("only", document.getElementById("fOnly").value);
+  return q.toString();
+}
+
+function rowHtml(r) {
+  return `<tr>
+    <td class="num">${r.id}</td><td class="nowrap">${fmtZurich(r.collected_at_utc)}</td><td class="nowrap">${esc(r.collected_at_utc)}</td>
+    <td class="num">${fmt(r.odometer_km)}</td><td class="num">${fmt(r.soc_percent)}</td><td class="num">${fmt(r.range_km)}</td>
+    <td class="num">${fmt(r.charge_power_kw, 1)}</td><td>${esc(r.charging_state) || "–"}</td><td>${esc(r.plug_connection_state) || "–"}</td>
+    <td class="num">${fmt(r.target_soc_percent)}</td><td class="num">${fmt(r.remaining_minutes_to_full)}</td>
+    <td class="addr" title="${esc(r.address)}">${esc(r.address) || "–"}</td><td>${esc(r.parking_state) || "–"}</td><td class="addr" title="${esc(r.source)}">${esc(r.source) || "–"}</td>
+  </tr>`;
+}
+
+function render() {
+  document.getElementById("tbody").innerHTML = rows.length ? rows.map(rowHtml).join("") : `<tr><td colspan="14" class="empty">Keine Einträge</td></tr>`;
+  document.getElementById("subline").textContent = `${fmt(total)} Einträge`;
+  document.getElementById("countTxt").textContent = `${fmt(rows.length)} von ${fmt(total)} angezeigt`;
+  document.getElementById("moreBtn").style.display = rows.length < total ? "" : "none";
+}
+
+async function reload() {
+  try {
+    const d = await api("/api/collector?" + query(0));
+    rows = d.rows; total = d.total; render();
+    if (!sourcesLoaded) {
+      const sel = document.getElementById("fSrc");
+      sel.innerHTML = `<option value="">Alle</option>` + d.sources.map((s) => `<option>${esc(s)}</option>`).join("");
+      sourcesLoaded = true;
+    }
+  } catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+}
+async function more() {
+  try { const d = await api("/api/collector?" + query(rows.length)); rows = rows.concat(d.rows); total = d.total; render(); }
+  catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+}
+function resetFilter() { ["fFrom", "fTo", "fSrc", "fOnly"].forEach((id) => (document.getElementById(id).value = "")); reload(); }
+reload();
+</script>
+</body>
+</html>

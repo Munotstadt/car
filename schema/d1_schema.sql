@@ -20,3 +20,17 @@ CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_t
 
 -- Notiz-Spalte für Trips (Trips-Seite, editierbar). Der Worker ergänzt sie bei Bedarf selbst.
 -- ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT;
+
+-- Ladevorgänge (Seite /charging). Der Worker legt die Tabelle bei Bedarf selbst an.
+CREATE TABLE IF NOT EXISTS car_charging_tbl (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  charging_date_utc TEXT NOT NULL,      -- 'YYYY-MM-DD HH:MM:SS' UTC
+  activity TEXT NOT NULL,               -- 'Home' | 'Away'
+  odometer_km REAL, soc_start REAL, soc_end REAL, range_start REAL, range_end REAL,
+  kwh_charged REAL, costs_chf REAL,
+  "duration_hh:mm" TEXT,                -- 'hh:mm'
+  temperature REAL, notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
+  placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT,
+  created_at_utc TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_date_utc);

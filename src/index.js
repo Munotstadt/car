@@ -27,6 +27,15 @@ function html(body, status = 200) {
  * Schema (idempotent)
  * ---------------------------------------------------------------------- */
 
+const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      charging_date_utc TEXT NOT NULL, activity TEXT NOT NULL,
+      odometer_km REAL, soc_start REAL, soc_end REAL, range_start REAL, range_end REAL,
+      kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature REAL,
+      notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
+      placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT,
+      created_at_utc TEXT NOT NULL DEFAULT (datetime('now')))`;
+
 let schemaReady = false;
 async function ensureSchema(db) {
   if (schemaReady) return;
@@ -38,6 +47,8 @@ async function ensureSchema(db) {
       placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT, placeholder4 TEXT, placeholder5 TEXT,
       at_date_utc TEXT NOT NULL)`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc)"),
+    db.prepare(CHARGING_DDL),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_date_utc)"),
   ]);
   const col = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('skoda_trips_tbl') WHERE name = 'note'").first();
   if (!col) await db.prepare("ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT").run();
@@ -85,6 +96,23 @@ const ACT_FIELDS = {
   odometer_km: parseNum, soc_percentage: parseNum, range_km: parseNum,
   placeholder1: parseText, placeholder2: parseText, placeholder3: parseText,
   placeholder4: parseText, placeholder5: parseText,
+};
+function parseActivityHA(v) {
+  const t = parseText(v);
+  if (t !== "Home" && t !== "Away") throw new Error("Ungültige Activity (nur Home oder Away)");
+  return t;
+}
+function parseDuration(v) {
+  const t = parseText(v);
+  if (t !== null && !/^\d{1,3}:[0-5]\d$/.test(t)) throw new Error("Ungültige Dauer (Format hh:mm)");
+  return t;
+}
+const CHG_FIELDS = {
+  activity: parseActivityHA,
+  odometer_km: parseNum, soc_start: parseNum, soc_end: parseNum, range_start: parseNum, range_end: parseNum,
+  kwh_charged: parseNum, costs_chf: parseNum, "duration_hh:mm": parseDuration, temperature: parseNum,
+  notes: parseText, location: parseText, station_name: parseText, charging_card: parseText,
+  placeholder1: parseText, placeholder2: parseText, placeholder3: parseText,
 };
 const UTC_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -240,6 +268,73 @@ async function handleApi(request, env, url) {
     if (m && method === "DELETE") {
       const res = await db.prepare("DELETE FROM skoda_activites_tbl WHERE id = ?").bind(Number(m[1])).run();
       if (!res.meta.changes) return json({ error: "Activity nicht gefunden" }, 404);
+      return json({ ok: true });
+    }
+
+    // ---- Collector-Log (nur lesen) ----
+    if (path === "/api/collector" && method === "GET") {
+      const p = url.searchParams;
+      const where = [], binds = [];
+      const from = p.get("from"), to = p.get("to"), src = p.get("source");
+      if (from) { if (!UTC_RE.test(from)) return json({ error: "Ungültig: from" }, 400); where.push("collected_at_utc >= ?"); binds.push(from); }
+      if (to) { if (!UTC_RE.test(to)) return json({ error: "Ungültig: to" }, 400); where.push("collected_at_utc < ?"); binds.push(to); }
+      if (src) { where.push("source = ?"); binds.push(src); }
+      if (p.get("only") === "gaps") where.push("(odometer_km IS NULL OR soc_percent IS NULL OR range_km IS NULL)");
+      const w = where.length ? "WHERE " + where.join(" AND ") : "";
+      const limit = Math.max(1, Math.min(1000, parseInt(p.get("limit") || "200", 10) || 200));
+      const offset = Math.max(0, parseInt(p.get("offset") || "0", 10) || 0);
+      const total = await db.prepare(`SELECT COUNT(*) AS n FROM skoda_collector_tbl ${w}`).bind(...binds).first();
+      const { results } = await db.prepare(`SELECT * FROM skoda_collector_tbl ${w} ORDER BY collected_at_utc DESC, id DESC LIMIT ? OFFSET ?`)
+        .bind(...binds, limit, offset).all();
+      const sources = (await db.prepare("SELECT DISTINCT source FROM skoda_collector_tbl WHERE source IS NOT NULL ORDER BY source").all()).results || [];
+      return json({ rows: results || [], total: total?.n ?? 0, sources: sources.map((r) => r.source) });
+    }
+
+    // ---- Charging ----
+    if (path === "/api/charging" && method === "GET") {
+      const { results } = await db.prepare("SELECT * FROM car_charging_tbl ORDER BY charging_date_utc DESC, id DESC").all();
+      return json({ charging: results || [] });
+    }
+    if (path === "/api/charging" && method === "POST") {
+      const body = await request.json();
+      const time = String(body.charging_date_utc || "");
+      if (!UTC_RE.test(time)) return json({ error: "charging_date_utc im Format YYYY-MM-DD HH:MM:SS erforderlich" }, 400);
+      const f = pick(body, CHG_FIELDS);
+      if (!f.activity) return json({ error: "activity (Home/Away) erforderlich" }, 400);
+      // Leere Startwerte mit dem letzten Collector-Stand (<= Zeitpunkt) vorbelegen
+      const snap = await db.prepare(
+        `SELECT odometer_km, soc_percent, range_km FROM skoda_collector_tbl
+         WHERE collected_at_utc <= ? ORDER BY collected_at_utc DESC LIMIT 1`).bind(time).first();
+      if (!("odometer_km" in f)) f.odometer_km = snap?.odometer_km ?? null;
+      if (!("soc_start" in f)) f.soc_start = snap?.soc_percent ?? null;
+      if (!("range_start" in f)) f.range_start = snap?.range_km ?? null;
+      const cols = ["charging_date_utc", ...Object.keys(f)];
+      const res = await db.prepare(`INSERT INTO car_charging_tbl (${cols.map((c) => `"${c}"`).join(", ")}, created_at_utc)
+        VALUES (${cols.map(() => "?").join(", ")}, datetime('now'))`).bind(time, ...Object.values(f)).run();
+      const row = await db.prepare("SELECT * FROM car_charging_tbl WHERE id = ?").bind(res.meta.last_row_id).first();
+      return json({ charging: row }, 201);
+    }
+    m = path.match(/^\/api\/charging\/(\d+)$/);
+    if (m && method === "PATCH") {
+      const id = Number(m[1]);
+      const body = await request.json();
+      const fields = pick(body, CHG_FIELDS);
+      if ("charging_date_utc" in body) {
+        const t = String(body.charging_date_utc);
+        if (!UTC_RE.test(t)) return json({ error: "charging_date_utc ungültig" }, 400);
+        fields.charging_date_utc = t;
+      }
+      const keys = Object.keys(fields);
+      if (!keys.length) return json({ error: "Keine änderbaren Felder übergeben" }, 400);
+      const res = await db.prepare(`UPDATE car_charging_tbl SET ${keys.map((k) => `"${k}" = ?`).join(", ")} WHERE id = ?`)
+        .bind(...keys.map((k) => fields[k]), id).run();
+      if (!res.meta.changes) return json({ error: "Ladevorgang nicht gefunden" }, 404);
+      const row = await db.prepare("SELECT * FROM car_charging_tbl WHERE id = ?").bind(id).first();
+      return json({ charging: row });
+    }
+    if (m && method === "DELETE") {
+      const res = await db.prepare("DELETE FROM car_charging_tbl WHERE id = ?").bind(Number(m[1])).run();
+      if (!res.meta.changes) return json({ error: "Ladevorgang nicht gefunden" }, 404);
       return json({ ok: true });
     }
 
