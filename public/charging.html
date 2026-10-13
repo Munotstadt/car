@@ -30,8 +30,8 @@
       <div class="field narrow"><label for="fChf">Kosten (CHF)</label><input id="fChf" type="number" step="0.01"></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div class="field"><label for="fLoc">Ort</label><input id="fLoc" maxlength="200"></div>
-      <div class="field"><label for="fStation">Ladestation</label><input id="fStation" maxlength="200"></div>
+      <div class="field"><label for="fLoc">Ort</label><input id="fLoc" list="locList" maxlength="200"></div>
+      <div class="field"><label for="fStation">Ladestation</label><input id="fStation" list="stationList" maxlength="200"></div>
       <div class="field"><label for="fCard">Ladekarte</label><input id="fCard" list="cardList" maxlength="200"></div>
       <div class="field wide"><label for="fNotes">Notiz</label><input id="fNotes" maxlength="500"></div>
     </div>
@@ -42,6 +42,8 @@
     <div id="formStatus" class="status-msg"></div>
     <div class="hint-txt">Leere Felder Odometer / SoC Start / Range Start werden beim Neuanlegen mit dem letzten Collector-Stand zum gewählten Zeitpunkt befüllt. Die Dauer im Format hh:mm.</div>
     <datalist id="cardList"></datalist>
+    <datalist id="locList"></datalist>
+    <datalist id="stationList"></datalist>
   </div>
 
   <div class="toolbar">
@@ -106,7 +108,9 @@ function render() {
   const kwh = list.reduce((s, r) => s + (r.kwh_charged || 0), 0), chf = list.reduce((s, r) => s + (r.costs_chf || 0), 0);
   $("subline").textContent = `${list.length} Ladevorgänge · ${fmt(kwh, 1)} kWh · CHF ${fmt(chf, 2)}${kwh > 0 ? ` · Ø ${fmt(chf / kwh, 3)} CHF/kWh` : ""}`;
   $("tbody").innerHTML = list.length ? list.map(rowHtml).join("") : `<tr><td colspan="19" class="empty">Keine Ladevorgänge</td></tr>`;
-  $("cardList").innerHTML = [...new Set(rows.map((r) => r.charging_card).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("");
+  for (const [id, col] of [["cardList", "charging_card"], ["locList", "location"], ["stationList", "station_name"]]) {
+    $(id).innerHTML = [...new Set(rows.map((r) => r[col]).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de")).map((c) => `<option value="${esc(c)}">`).join("");
+  }
 }
 
 function resetForm() {
@@ -166,6 +170,13 @@ function fillYears() {
   sel.value = cur && [...sel.options].some((o) => o.value === cur) ? cur : years[0];
 }
 
+// Ladestation gewählt -> Ort (und Karte) vom letzten Vorgang an dieser Station vorschlagen, falls leer
+$("fStation").addEventListener("change", () => {
+  const last = rows.find((r) => r.station_name === $("fStation").value);
+  if (!last) return;
+  if (!$("fLoc").value && last.location) $("fLoc").value = last.location;
+  if (!$("fCard").value && last.charging_card) $("fCard").value = last.charging_card;
+});
 $("yearSel").addEventListener("change", render);
 $("showPh").addEventListener("change", render);
 resetForm();
