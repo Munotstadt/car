@@ -15,7 +15,7 @@
   <div class="toolbar">
     <div class="row">
       <div class="field"><label for="yearSel">Jahr</label><select id="yearSel"></select></div>
-      <div class="field"><label for="search">Suche</label><input id="search" placeholder="Adresse, Klassifizierung…"></div>
+      <div class="field"><label for="search">Suche</label><input id="search" placeholder="Adresse, Notiz, Wetter…"></div>
     </div>
     <div id="status" class="status-msg"></div>
   </div>
@@ -24,14 +24,14 @@
     <table>
       <thead><tr>
         <th>Start</th><th>Ende</th><th>Von</th><th>Nach</th>
-        <th class="num">km</th><th class="num">kWh</th><th class="num">kWh/100km</th>
+        <th class="num">km</th>
         <th>SoC start → ende (%)</th><th>Odo start → ende</th>
-        <th class="num">°C</th><th>Wetter</th><th>Reifen</th><th>Klassifizierung</th><th></th>
+        <th class="num">°C</th><th>Wetter</th><th>Reifen</th><th>Notiz</th><th></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
   </div>
-  <div class="hint-txt">«Bearbeiten» öffnet die Zeile. kWh/100km wird beim Speichern aus km und kWh neu berechnet. Zeiten in Zürcher Zeit.</div>
+  <div class="hint-txt">«Bearbeiten» öffnet die Zeile. Reifen: Sommer oder Winter. Zeiten in Zürcher Zeit.</div>
 </div>
 
 <script src="/common.js"></script>
@@ -44,17 +44,22 @@ function inp(id, key, val, cls = "") {
   return `<input data-k="${key}" class="${cls}" value="${esc(val)}">`;
 }
 
+function tiresSelect(val) {
+  const opts = ["", "Sommer", "Winter"];
+  if (val && !opts.includes(val)) opts.push(val); // unbekannte Altwerte nicht verlieren
+  return `<select data-k="tires">${opts.map((o) => `<option value="${esc(o)}"${o === (val || "") ? " selected" : ""}>${o || "–"}</option>`).join("")}</select>`;
+}
+
 function rowHtml(t) {
   if (t.id === editId) {
     return `<tr class="editing" data-id="${t.id}">
       <td class="nowrap">${fmtZurich(t.start_utc)}</td><td class="nowrap">${fmtZurich(t.end_utc)}</td>
       <td>${inp(0, "start_address", t.start_address)}</td><td>${inp(0, "end_address", t.end_address)}</td>
-      <td>${inp(0, "distance_km", t.distance_km, "n")}</td><td>${inp(0, "consumption_kwh", t.consumption_kwh, "n")}</td>
-      <td class="num">${fmt(t.consumption_kwh_per_100km, 1)}</td>
+      <td>${inp(0, "distance_km", t.distance_km, "n")}</td>
       <td><div class="pair">${inp(0, "start_soc_percent", t.start_soc_percent, "n")}→${inp(0, "end_soc_percent", t.end_soc_percent, "n")}</div></td>
       <td><div class="pair">${inp(0, "start_odometer_km", t.start_odometer_km, "n")}→${inp(0, "end_odometer_km", t.end_odometer_km, "n")}</div></td>
       <td>${inp(0, "temperature_c", t.temperature_c, "n")}</td><td>${inp(0, "weather", t.weather)}</td>
-      <td>${inp(0, "tires", t.tires)}</td><td>${inp(0, "classification", t.classification)}</td>
+      <td>${tiresSelect(t.tires)}</td><td><input data-k="note" value="${esc(t.note)}" style="min-width:200px"></td>
       <td class="actions"><button class="sm" onclick="save(${t.id})">Speichern</button> <button class="sm ghost" onclick="cancel()">Abbrechen</button></td>
     </tr>`;
   }
@@ -62,12 +67,11 @@ function rowHtml(t) {
     <td class="nowrap">${fmtZurich(t.start_utc)}</td><td class="nowrap">${fmtZurich(t.end_utc)}</td>
     <td class="addr" title="${esc(t.start_address)}">${esc(t.start_address) || "–"}</td>
     <td class="addr" title="${esc(t.end_address)}">${esc(t.end_address) || "–"}</td>
-    <td class="num">${fmt(t.distance_km, 1)}</td><td class="num">${fmt(t.consumption_kwh, 1)}</td>
-    <td class="num">${fmt(t.consumption_kwh_per_100km, 1)}</td>
+    <td class="num">${fmt(t.distance_km, 1)}</td>
     <td class="num">${fmt(t.start_soc_percent)} → ${fmt(t.end_soc_percent)}</td>
     <td class="num">${fmt(t.start_odometer_km)} → ${fmt(t.end_odometer_km)}</td>
     <td class="num">${fmt(t.temperature_c, 1)}</td><td>${esc(t.weather) || "–"}</td>
-    <td>${esc(t.tires) || "–"}</td><td>${esc(t.classification) || "–"}</td>
+    <td>${esc(t.tires) || "–"}</td><td class="addr" title="${esc(t.note)}">${esc(t.note) || "–"}</td>
     <td class="actions"><button class="sm ghost" onclick="edit(${t.id})">Bearbeiten</button></td>
   </tr>`;
 }
@@ -77,7 +81,7 @@ function visible() {
   const q = document.getElementById("search").value.trim().toLowerCase();
   return trips.filter((t) =>
     (y === "all" || t.start_utc.startsWith(y)) &&
-    (!q || [t.start_address, t.end_address, t.classification, t.weather, t.tires].some((s) => (s || "").toLowerCase().includes(q))));
+    (!q || [t.start_address, t.end_address, t.weather, t.tires, t.note].some((s) => (s || "").toLowerCase().includes(q))));
 }
 
 function render() {
@@ -86,7 +90,7 @@ function render() {
   document.getElementById("subline").textContent = `${list.length} Trips · ${fmt(km, 1)} km`;
   document.getElementById("tbody").innerHTML = list.length
     ? list.map(rowHtml).join("")
-    : `<tr><td colspan="14" class="empty">Keine Trips</td></tr>`;
+    : `<tr><td colspan="12" class="empty">Keine Trips</td></tr>`;
 }
 
 function edit(id) { editId = id; render(); }

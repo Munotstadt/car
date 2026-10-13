@@ -5,7 +5,7 @@ Dashboard für die Škoda-Enyaq-Daten (Cloudflare Worker + D1 `car`), Layout ana
 | Seite | Pfad | Inhalt |
 |---|---|---|
 | Dashboard | `/` | Kacheln km-Stand, SoC, Reichweite je mit Chart (7/30/90 Tage/Alles) |
-| Trips | `/trips` | Tabelle `skoda_trips_tbl`, Zeilen editierbar |
+| Trips | `/trips` | Tabelle `skoda_trips_tbl`, Zeilen editierbar (Reifen: Sommer/Winter, Notiz) |
 | Statistics | `/statistics` | km YtD vs. PYtD, Tabelle Monat / km Monat |
 | Activities | `/activities` | Tabelle `skoda_activites_tbl` (anlegen, ändern, löschen) |
 
@@ -35,5 +35,5 @@ Jeder Push auf `main` deployt automatisch. `munot.app` muss als Zone im selben C
 ## Hinweise
 
 - Zeiten in der DB sind UTC (`YYYY-MM-DD HH:MM:SS`), Anzeige in Europe/Zurich.
-- Statistik-km = Summe `distance_km` aus `skoda_trips_tbl` nach Startdatum (UTC); YtD/PYtD jeweils bis zum heutigen Kalendertag.
+- Statistik-km stammen aus dem Odometer in `skoda_collector_tbl` (Monate in UTC): km Monat = höchster Stand des Monats minus höchster Stand der Vorperiode; YtD/PYtD jeweils bis zum heutigen Kalendertag. Der erste Monat mit Daten wird ab dem ersten Messwert gerechnet.
 - Beim Anlegen einer Activity werden leere Odometer/SoC/Range-Felder mit dem letzten Collector-Stand vorbelegt.

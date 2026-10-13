@@ -17,3 +17,6 @@ CREATE TABLE IF NOT EXISTS skoda_activites_tbl (
   at_date_utc TEXT NOT NULL             -- 'YYYY-MM-DD' UTC (aus activity_time_utc)
 );
 CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc);
+
+-- Notiz-Spalte für Trips (Trips-Seite, editierbar). Der Worker ergänzt sie bei Bedarf selbst.
+-- ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT;

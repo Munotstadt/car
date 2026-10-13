@@ -139,3 +139,65 @@ function groupedBars(el, labels, a, b, colors = ["#E30613", "#b5b5b5"], dec = 0)
   });
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${grid}${bars}</svg>`;
 }
+
+/**
+ * Liniendiagramm mit zwei Achsen: links Serie A, rechts Serie B.
+ * rows: [{t: ms, a: number|null, b: number|null}]
+ * oa/ob: {color, label, unit, decimals, clamp:[min,max]}
+ */
+function dualLineChart(el, rows, oa, ob) {
+  const W = 640, H = 230, pl = 46, pr = 46, pt = 10, pb = 24;
+  const A = rows.filter((r) => r.a !== null && r.a !== undefined && isFinite(r.a));
+  const B = rows.filter((r) => r.b !== null && r.b !== undefined && isFinite(r.b));
+  if (A.length < 2 && B.length < 2) { el.innerHTML = '<div class="empty">Zu wenig Daten im gewählten Zeitraum</div>'; return; }
+  const ts = rows.map((r) => r.t);
+  const t0 = Math.min(...ts), t1 = Math.max(...ts);
+  const scale = (vals, clamp) => {
+    if (!vals.length) return [0, 1];
+    let min = Math.min(...vals), max = Math.max(...vals);
+    if (min === max) { min -= 1; max += 1; }
+    const pad = (max - min) * 0.08; min -= pad; max += pad;
+    if (clamp) { min = Math.max(clamp[0], min); max = Math.min(clamp[1], max); }
+    return [min, max];
+  };
+  const [amin, amax] = scale(A.map((r) => r.a), oa.clamp);
+  const [bmin, bmax] = scale(B.map((r) => r.b), ob.clamp);
+  const x = (t) => pl + ((t - t0) / (t1 - t0 || 1)) * (W - pl - pr);
+  const ya = (v) => pt + (1 - (v - amin) / (amax - amin)) * (H - pt - pb);
+  const yb = (v) => pt + (1 - (v - bmin) / (bmax - bmin)) * (H - pt - pb);
+
+  const N = 4;
+  let grid = "";
+  for (let i = 0; i <= N; i++) {
+    const va = amin + ((amax - amin) * i) / N, vb = bmin + ((bmax - bmin) * i) / N, yy = ya(va);
+    grid += `<line x1="${pl}" x2="${W - pr}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>` +
+      `<text x="${pl - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="${oa.color}">${fmt(va, oa.decimals ?? 0)}</text>` +
+      `<text x="${W - pr + 6}" y="${yy + 4}" text-anchor="start" font-size="10" fill="${ob.color}">${fmt(vb, ob.decimals ?? 0)}</text>`;
+  }
+  const dfmt = new Intl.DateTimeFormat("de-CH", { timeZone: "Europe/Zurich", day: "2-digit", month: "2-digit" });
+  const xt = niceTicks(t0, t1, 4).map((t, i) =>
+    `<text x="${x(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}" font-size="10" fill="#8a8a8a">${dfmt.format(new Date(t))}</text>`).join("");
+  const path = (arr, key, yf) => arr.map((r, i) => `${i ? "L" : "M"}${x(r.t).toFixed(1)},${yf(r[key]).toFixed(1)}`).join("");
+
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
+      ${grid}${xt}
+      ${A.length > 1 ? `<path d="${path(A, "a", ya)}" fill="none" stroke="${oa.color}" stroke-width="2" stroke-linejoin="round"/>` : ""}
+      ${B.length > 1 ? `<path d="${path(B, "b", yb)}" fill="none" stroke="${ob.color}" stroke-width="2" stroke-linejoin="round"/>` : ""}
+      ${B.length === 1 ? `<circle cx="${x(B[0].t)}" cy="${yb(B[0].b)}" r="3" fill="${ob.color}"/>` : ""}
+      <line class="vl" y1="${pt}" y2="${H - pb}" stroke="#999" stroke-dasharray="3 3" style="display:none"/>
+    </svg><div class="tt"></div>`;
+  const svg = el.querySelector("svg"), tt = el.querySelector(".tt"), vl = el.querySelector(".vl");
+  const tfmt = new Intl.DateTimeFormat("de-CH", { timeZone: "Europe/Zurich", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  svg.addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    let best = rows[0], bd = Infinity;
+    for (const p of rows) { const d = Math.abs(x(p.t) - px); if (d < bd) { bd = d; best = p; } }
+    vl.setAttribute("x1", x(best.t)); vl.setAttribute("x2", x(best.t)); vl.style.display = "";
+    tt.style.display = "block";
+    tt.style.left = (x(best.t) / W) * r.width + "px";
+    tt.style.top = "20px";
+    tt.textContent = `${tfmt.format(new Date(best.t))} · ${oa.label} ${fmt(best.a, oa.decimals ?? 0)} ${oa.unit} · ${ob.label} ${fmt(best.b, ob.decimals ?? 0)} ${ob.unit}`;
+  });
+  svg.addEventListener("mouseleave", () => { vl.style.display = "none"; tt.style.display = "none"; });
+}

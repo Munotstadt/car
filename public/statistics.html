@@ -32,7 +32,7 @@
       <tbody id="tbody"></tbody>
     </table>
   </div>
-  <div class="hint-txt">Basis: Summe der Trip-Distanzen (skoda_trips_tbl) nach Startzeit (UTC). YtD/PYtD jeweils bis zum heutigen Tag des Jahres.</div>
+  <div class="hint-txt">Basis: Kilometerstand aus <code>skoda_collector_tbl</code> (UTC-Monate). km Monat = höchster Stand des Monats minus höchster Stand der Vorperiode; YtD/PYtD jeweils bis zum heutigen Tag des Jahres. * = erster Monat mit Daten, nur ab erstem Messwert gerechnet.</div>
 </div>
 
 <script src="/common.js"></script>
@@ -44,7 +44,7 @@ let stats = null;
 
 function kmFor(year, m) {
   const r = stats.monthly.find((x) => x.ym === `${year}-${String(m).padStart(2, "0")}`);
-  return r ? r.km : 0;
+  return r ? r.km : null;
 }
 
 function renderTable() {
@@ -52,8 +52,9 @@ function renderTable() {
   const maxMonth = y === stats.year ? Number(stats.today.slice(5, 7)) : 12;
   let total = 0, rows = "";
   for (let m = 1; m <= maxMonth; m++) {
-    const km = kmFor(y, m); total += km;
-    rows += `<tr><td>${MONTHS[m - 1]}</td><td class="num">${fmt(km, 1)}</td></tr>`;
+    const km = kmFor(y, m); total += km || 0;
+    const part = stats.monthly.find((x) => x.ym === `${y}-${String(m).padStart(2, "0")}`)?.partial ? " *" : "";
+    rows += `<tr><td>${MONTHS[m - 1]}</td><td class="num">${fmt(km, 1)}${part}</td></tr>`;
   }
   document.getElementById("tbody").innerHTML = rows + `<tr class="total"><td>Total ${y}</td><td class="num">${fmt(total, 1)}</td></tr>`;
 }
@@ -61,19 +62,21 @@ function renderTable() {
 async function load() {
   try {
     stats = await api("/api/stats");
-    const cur = stats.ytd.km, prev = stats.pytd.km, diff = cur - prev;
+    const cur = stats.ytd.km, prev = stats.pytd.km;
+    const diff = cur !== null && prev !== null ? cur - prev : null;
     const md = `${stats.today.slice(8, 10)}.${stats.today.slice(5, 7)}.`;
     document.getElementById("subline").textContent = `Stand ${md}${stats.year}`;
     document.getElementById("lCur").textContent = `YtD ${stats.year}`;
     document.getElementById("lPrev").textContent = `PYtD ${stats.prevYear}`;
     document.getElementById("lgCur").textContent = stats.year;
     document.getElementById("lgPrev").textContent = stats.prevYear;
-    document.getElementById("vCur").innerHTML = `${fmt(cur, 0)} <small>km</small>`;
-    document.getElementById("vPrev").innerHTML = `${fmt(prev, 0)} <small>km</small>`;
-    document.getElementById("dCur").textContent = `${stats.ytd.n} Trips`;
-    document.getElementById("dPrev").textContent = `${stats.pytd.n} Trips · 01.01.–${md}${stats.prevYear}`;
-    document.getElementById("vDiff").innerHTML = `${diff > 0 ? "+" : ""}${fmt(diff, 0)} <small>km</small>`;
-    document.getElementById("dDiff").innerHTML = prev > 0
+    const fromTxt = (x) => (x.from ? `Daten ab ${x.from.slice(8, 10)}.${x.from.slice(5, 7)}.${x.from.slice(0, 4)}` : "");
+    document.getElementById("dCur").textContent = `01.01.–${md}${stats.year}${stats.ytd.from ? " · " + fromTxt(stats.ytd) : ""}`;
+    document.getElementById("dPrev").textContent = prev === null ? "Keine Daten" : `01.01.–${md}${stats.prevYear}${stats.pytd.from ? " · " + fromTxt(stats.pytd) : ""}`;
+    document.getElementById("vCur").innerHTML = cur === null ? "–" : `${fmt(cur, 0)} <small>km</small>`;
+    document.getElementById("vPrev").innerHTML = prev === null ? "–" : `${fmt(prev, 0)} <small>km</small>`;
+    document.getElementById("vDiff").innerHTML = diff === null ? "–" : `${diff > 0 ? "+" : ""}${fmt(diff, 0)} <small>km</small>`;
+    document.getElementById("dDiff").innerHTML = diff !== null && prev > 0
       ? `<span class="${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "+" : ""}${fmt((diff / prev) * 100, 1)} %</span> ggü. Vorjahr`
       : "Keine Vorjahresdaten";
 

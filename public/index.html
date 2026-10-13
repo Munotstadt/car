@@ -27,7 +27,13 @@
     <div class="tile c-soc"><div class="label">SoC</div><div class="value" id="vSoc">–</div><div class="delta" id="dSoc"></div><div class="chart" id="chSoc"></div></div>
     <div class="tile c-range"><div class="label">Reichweite</div><div class="value" id="vRange">–</div><div class="delta" id="dRange"></div><div class="chart" id="chRange"></div></div>
   </div>
-  <div class="footer">Quelle: Škoda-Collector (D1 «car»)</div>
+  <h2>SoC &amp; Reichweite</h2>
+  <div class="card">
+    <div class="legend"><span><i style="background:#7c3aed"></i>SoC (%) – linke Achse</span><span><i style="background:#0f9b8e"></i>Range (km) – rechte Achse</span></div>
+    <div class="chart" id="chBoth"></div>
+  </div>
+
+  <div class="footer">Quelle: Tabelle <code>skoda_collector_tbl</code> (D1 «car») · Seite zuletzt angepasst am 13.10.2026</div>
 </div>
 
 <script src="/common.js"></script>
@@ -41,6 +47,13 @@ function delta(el, series, key, unit, dec) {
   const d = v[v.length - 1] - v[0];
   const cls = d > 0 ? "up" : d < 0 ? "down" : "";
   el.innerHTML = `Zeitraum: <span class="${cls}">${d > 0 ? "+" : ""}${fmt(d, dec)} ${unit}</span>`;
+}
+
+function lineDual(series) {
+  dualLineChart(document.getElementById("chBoth"),
+    series.map((r) => ({ t: parseUtc(r.t), a: r.soc_percent, b: r.range_km })),
+    { color: "#7c3aed", label: "SoC", unit: "%", decimals: 0, clamp: [0, 100] },
+    { color: "#0f9b8e", label: "Range", unit: "km", decimals: 0, clamp: [0, Infinity] });
 }
 
 async function load() {
@@ -62,6 +75,7 @@ async function load() {
     lineChart(document.getElementById("chOdo"), pts("odometer_km"), { color: "#1f6feb", unit: "km" });
     lineChart(document.getElementById("chSoc"), pts("soc_percent"), { color: "#7c3aed", unit: "%", clamp: [0, 100] });
     lineChart(document.getElementById("chRange"), pts("range_km"), { color: "#0f9b8e", unit: "km", clamp: [0, Infinity] });
+    lineDual(series);
     delta(document.getElementById("dOdo"), series, "odometer_km", "km", 0);
     delta(document.getElementById("dSoc"), series, "soc_percent", "%", 0);
     delta(document.getElementById("dRange"), series, "range_km", "km", 0);

@@ -39,6 +39,8 @@ async function ensureSchema(db) {
       at_date_utc TEXT NOT NULL)`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc)"),
   ]);
+  const col = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('skoda_trips_tbl') WHERE name = 'note'").first();
+  if (!col) await db.prepare("ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT").run();
   schemaReady = true;
 }
 
@@ -66,12 +68,17 @@ function parseText(v) {
   return s === "" ? null : s.slice(0, 500);
 }
 
+function parseTires(v) {
+  const t = parseText(v);
+  if (t !== null && t !== "Sommer" && t !== "Winter") throw new Error("Ungültige Reifen-Auswahl (nur Sommer oder Winter)");
+  return t;
+}
 const TRIP_FIELDS = {
-  classification: parseText, start_address: parseText, end_address: parseText,
-  distance_km: parseNum, consumption_kwh: parseNum,
+  start_address: parseText, end_address: parseText,
+  distance_km: parseNum,
   start_odometer_km: parseNum, end_odometer_km: parseNum,
   start_soc_percent: parseNum, end_soc_percent: parseNum,
-  temperature_c: parseNum, weather: parseText, tires: parseText,
+  temperature_c: parseNum, weather: parseText, tires: parseTires, note: parseText,
 };
 const ACT_FIELDS = {
   activity: parseText, activity_comment: parseText,
@@ -124,30 +131,46 @@ async function handleApi(request, env, url) {
       const res = await db.prepare(`UPDATE skoda_trips_tbl SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`)
         .bind(...keys.map((k) => fields[k]), id).run();
       if (!res.meta.changes) return json({ error: "Trip nicht gefunden" }, 404);
-      if (keys.includes("distance_km") || keys.includes("consumption_kwh")) {
-        await db.prepare(`UPDATE skoda_trips_tbl SET consumption_kwh_per_100km =
-            CASE WHEN distance_km > 0 AND consumption_kwh IS NOT NULL THEN ROUND(consumption_kwh * 100.0 / distance_km, 1) ELSE NULL END
-          WHERE id = ?`).bind(id).run();
-      }
       const row = await db.prepare("SELECT * FROM skoda_trips_tbl WHERE id = ?").bind(id).first();
       return json({ trip: row });
     }
 
-    // ---- Statistics ----
+    // ---- Statistics (Basis: skoda_collector_tbl, Odometer) ----
     if (path === "/api/stats" && method === "GET") {
       const today = zurichToday();
       const year = today.slice(0, 4);
       const prevYear = String(Number(year) - 1);
       const md = today.slice(5);
-      const ytdQ = (y) => db.prepare(
-        `SELECT COALESCE(SUM(distance_km), 0) km, COUNT(*) n FROM skoda_trips_tbl
-         WHERE substr(start_utc, 1, 4) = ? AND substr(start_utc, 6, 5) <= ?`).bind(y, md).first();
-      const [ytd, pytd, monthly] = await Promise.all([
-        ytdQ(year), ytdQ(prevYear),
-        db.prepare(`SELECT substr(start_utc, 1, 7) ym, ROUND(SUM(distance_km), 1) km, COUNT(*) n
-                    FROM skoda_trips_tbl WHERE distance_km IS NOT NULL GROUP BY ym ORDER BY ym`).all(),
+      const ytd = async (y) => {
+        const end = await db.prepare(
+          "SELECT MAX(odometer_km) o FROM skoda_collector_tbl WHERE odometer_km IS NOT NULL AND collected_at_utc <= ?")
+          .bind(`${y}-${md} 23:59:59`).first();
+        if (end?.o === null || end?.o === undefined) return { km: null, from: null };
+        const base = await db.prepare(
+          "SELECT MAX(odometer_km) o FROM skoda_collector_tbl WHERE odometer_km IS NOT NULL AND collected_at_utc < ?")
+          .bind(`${y}-01-01`).first();
+        if (base?.o !== null && base?.o !== undefined) return { km: end.o - base.o, from: null };
+        // Keine Daten vor dem 1.1.: erster Messwert des Jahres als Basis
+        const first = await db.prepare(
+          `SELECT odometer_km o, substr(collected_at_utc, 1, 10) d FROM skoda_collector_tbl
+           WHERE odometer_km IS NOT NULL AND collected_at_utc >= ? ORDER BY collected_at_utc LIMIT 1`).bind(`${y}-01-01`).first();
+        return { km: end.o - first.o, from: first.d };
+      };
+      const [cur, prev, months] = await Promise.all([
+        ytd(year), ytd(prevYear),
+        db.prepare(`SELECT substr(collected_at_utc, 1, 7) ym, MIN(odometer_km) mn, MAX(odometer_km) mx
+                    FROM skoda_collector_tbl WHERE odometer_km IS NOT NULL GROUP BY ym ORDER BY ym`).all(),
       ]);
-      return json({ today, year, prevYear, ytd, pytd, monthly: monthly.results || [] });
+      // km Monat = hoechster Odometer des Monats minus hoechster Odometer der Vorperiode
+      // (erster Monat mit Daten: minus tiefster Wert dieses Monats)
+      let prevMax = null;
+      const monthly = (months.results || []).map((r) => {
+        const km = r.mx - (prevMax !== null ? prevMax : r.mn);
+        const partial = prevMax === null;
+        prevMax = r.mx;
+        return { ym: r.ym, km: Math.round(km * 10) / 10, partial };
+      });
+      return json({ today, year, prevYear, ytd: cur, pytd: prev, monthly });
     }
 
     // ---- Activities ----
@@ -207,7 +230,7 @@ async function handleApi(request, env, url) {
 
     return json({ error: "Nicht gefunden" }, 404);
   } catch (e) {
-    if (e instanceof SyntaxError || /Ungültige Zahl/.test(e.message)) return json({ error: e.message }, 400);
+    if (e instanceof SyntaxError || /^Ungültig/.test(e.message)) return json({ error: e.message }, 400);
     console.log("API-Fehler:", e);
     return json({ error: "Interner Fehler" }, 500);
   }
