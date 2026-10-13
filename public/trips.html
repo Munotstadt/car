@@ -31,7 +31,7 @@
       <tbody id="tbody"></tbody>
     </table>
   </div>
-  <div class="hint-txt">«Bearbeiten» öffnet die Zeile. Reifen: Sommer oder Winter. Zeiten in Zürcher Zeit.</div>
+  <div class="hint-txt">«Bearbeiten» öffnet die Zeile, «Löschen» entfernt den Trip endgültig. Reifen: Sommer oder Winter. Zeiten in Zürcher Zeit.</div>
 </div>
 
 <script src="/common.js"></script>
@@ -72,7 +72,7 @@ function rowHtml(t) {
     <td class="num">${fmt(t.start_odometer_km)} → ${fmt(t.end_odometer_km)}</td>
     <td class="num">${fmt(t.temperature_c, 1)}</td><td>${esc(t.weather) || "–"}</td>
     <td>${esc(t.tires) || "–"}</td><td class="addr" title="${esc(t.note)}">${esc(t.note) || "–"}</td>
-    <td class="actions"><button class="sm ghost" onclick="edit(${t.id})">Bearbeiten</button></td>
+    <td class="actions"><button class="sm ghost" onclick="edit(${t.id})">Bearbeiten</button> <button class="sm ghost danger" onclick="del(${t.id})">Löschen</button></td>
   </tr>`;
 }
 
@@ -106,6 +106,17 @@ async function save(id) {
     trips = trips.map((t) => (t.id === id ? trip : t));
     editId = null; render();
     setStatus(statusEl, "Gespeichert", "ok");
+  } catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+async function del(id) {
+  const t = trips.find((x) => x.id === id);
+  const label = `${fmtZurich(t.start_utc)} · ${t.start_address || "?"} → ${t.end_address || "?"} · ${fmt(t.distance_km, 1)} km`;
+  if (!confirm(`Trip endgültig löschen?\n\n${label}`)) return;
+  try {
+    await api(`/api/trips/${id}`, { method: "DELETE", body: {} });
+    trips = trips.filter((x) => x.id !== id); render();
+    setStatus(statusEl, "Gelöscht", "ok");
   } catch (e) { setStatus(statusEl, e.message, "err"); }
 }
 

@@ -135,6 +135,12 @@ async function handleApi(request, env, url) {
       return json({ trip: row });
     }
 
+    if (m && method === "DELETE") {
+      const res = await db.prepare("DELETE FROM skoda_trips_tbl WHERE id = ?").bind(Number(m[1])).run();
+      if (!res.meta.changes) return json({ error: "Trip nicht gefunden" }, 404);
+      return json({ ok: true });
+    }
+
     // ---- Statistics (Basis: skoda_collector_tbl, Odometer) ----
     if (path === "/api/stats" && method === "GET") {
       const today = zurichToday();
