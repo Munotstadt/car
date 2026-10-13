@@ -1,0 +1,30 @@
+{
+  "name": "car",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+
+  // Statische Seiten (public/) werden vom Worker nach dem Login-Check ausgeliefert.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  // Setzt voraus, dass munot.app als Zone im selben Cloudflare-Account liegt.
+  "routes": [
+    { "pattern": "car.munot.app", "custom_domain": true }
+  ],
+
+  // D1-Datenbank "car" (Tabellen skoda_collector_tbl, skoda_trips_tbl, skoda_activites_tbl)
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "car",
+      "database_id": "8dcdf6f9-0ccb-4608-bb7d-90580afdc02f"
+    }
+  ]
+
+  // Secrets NICHT hier eintragen, sondern per:
+  //   wrangler secret put TOTP_SECRET      (Base32-Secret fuer Google Authenticator)
+  //   wrangler secret put SESSION_SECRET   (z.B. openssl rand -hex 32)
+}

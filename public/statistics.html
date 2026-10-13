@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Munotstadt Car · Statistics</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="header"></div>
+<div class="wrap">
+  <h1>Statistics</h1>
+  <div class="sub" id="subline">Lade Statistik…</div>
+
+  <h2>km YtD vs. PYtD</h2>
+  <div class="kpi-grid">
+    <div class="kpi c-cur"><div class="label" id="lCur">YtD</div><div class="value" id="vCur">–</div><div class="delta" id="dCur"></div></div>
+    <div class="kpi c-prev"><div class="label" id="lPrev">PYtD</div><div class="value" id="vPrev">–</div><div class="delta" id="dPrev"></div></div>
+    <div class="kpi c-diff"><div class="label">Differenz</div><div class="value" id="vDiff">–</div><div class="delta" id="dDiff"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="legend"><span><i id="swCur" style="background:#E30613"></i><span id="lgCur"></span></span><span><i style="background:#b5b5b5"></i><span id="lgPrev"></span></span></div>
+    <div class="chart" id="chart"></div>
+  </div>
+
+  <h2>km pro Monat</h2>
+  <div class="toolbar"><div class="field"><label for="yearSel">Jahr</label><select id="yearSel"></select></div></div>
+  <div class="table-wrap" style="max-width:420px;">
+    <table>
+      <thead><tr><th>Monat</th><th class="num">km Monat</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="hint-txt">Basis: Summe der Trip-Distanzen (skoda_trips_tbl) nach Startzeit (UTC). YtD/PYtD jeweils bis zum heutigen Tag des Jahres.</div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+renderHeader("/statistics");
+const MONTHS = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+const MON_SHORT = ["Jan","Feb","Mrz","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
+let stats = null;
+
+function kmFor(year, m) {
+  const r = stats.monthly.find((x) => x.ym === `${year}-${String(m).padStart(2, "0")}`);
+  return r ? r.km : 0;
+}
+
+function renderTable() {
+  const y = document.getElementById("yearSel").value;
+  const maxMonth = y === stats.year ? Number(stats.today.slice(5, 7)) : 12;
+  let total = 0, rows = "";
+  for (let m = 1; m <= maxMonth; m++) {
+    const km = kmFor(y, m); total += km;
+    rows += `<tr><td>${MONTHS[m - 1]}</td><td class="num">${fmt(km, 1)}</td></tr>`;
+  }
+  document.getElementById("tbody").innerHTML = rows + `<tr class="total"><td>Total ${y}</td><td class="num">${fmt(total, 1)}</td></tr>`;
+}
+
+async function load() {
+  try {
+    stats = await api("/api/stats");
+    const cur = stats.ytd.km, prev = stats.pytd.km, diff = cur - prev;
+    const md = `${stats.today.slice(8, 10)}.${stats.today.slice(5, 7)}.`;
+    document.getElementById("subline").textContent = `Stand ${md}${stats.year}`;
+    document.getElementById("lCur").textContent = `YtD ${stats.year}`;
+    document.getElementById("lPrev").textContent = `PYtD ${stats.prevYear}`;
+    document.getElementById("lgCur").textContent = stats.year;
+    document.getElementById("lgPrev").textContent = stats.prevYear;
+    document.getElementById("vCur").innerHTML = `${fmt(cur, 0)} <small>km</small>`;
+    document.getElementById("vPrev").innerHTML = `${fmt(prev, 0)} <small>km</small>`;
+    document.getElementById("dCur").textContent = `${stats.ytd.n} Trips`;
+    document.getElementById("dPrev").textContent = `${stats.pytd.n} Trips · 01.01.–${md}${stats.prevYear}`;
+    document.getElementById("vDiff").innerHTML = `${diff > 0 ? "+" : ""}${fmt(diff, 0)} <small>km</small>`;
+    document.getElementById("dDiff").innerHTML = prev > 0
+      ? `<span class="${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "+" : ""}${fmt((diff / prev) * 100, 1)} %</span> ggü. Vorjahr`
+      : "Keine Vorjahresdaten";
+
+    groupedBars(document.getElementById("chart"), MON_SHORT,
+      MON_SHORT.map((_, i) => kmFor(stats.year, i + 1)), MON_SHORT.map((_, i) => kmFor(stats.prevYear, i + 1)));
+
+    const years = [...new Set([stats.year, ...stats.monthly.map((r) => r.ym.slice(0, 4))])].sort().reverse();
+    const sel = document.getElementById("yearSel");
+    sel.innerHTML = years.map((y) => `<option>${y}</option>`).join("");
+    sel.value = stats.year;
+    renderTable();
+  } catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+}
+document.getElementById("yearSel").addEventListener("change", renderTable);
+load();
+</script>
+</body>
+</html>

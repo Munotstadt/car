@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Munotstadt Car · Activities</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="header"></div>
+<div class="wrap wide">
+  <h1>Activities</h1>
+  <div class="sub" id="subline">Lade Activities…</div>
+
+  <h2>Neue Activity</h2>
+  <div class="card">
+    <div class="row">
+      <div class="field"><label for="nTime">Zeitpunkt (Zürich)</label><input id="nTime" type="datetime-local"></div>
+      <div class="field"><label for="nAct">Activity</label><input id="nAct" list="actList" placeholder="z.B. Reifenwechsel"></div>
+      <div class="field wide"><label for="nCom">Kommentar</label><input id="nCom" maxlength="500"></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div class="field narrow"><label for="nOdo">Odometer (km)</label><input id="nOdo" type="number" step="1" placeholder="auto"></div>
+      <div class="field narrow"><label for="nSoc">SoC (%)</label><input id="nSoc" type="number" step="1" placeholder="auto"></div>
+      <div class="field narrow"><label for="nRng">Range (km)</label><input id="nRng" type="number" step="1" placeholder="auto"></div>
+      <button onclick="add()" id="addBtn">Hinzufügen</button>
+    </div>
+    <div id="addStatus" class="status-msg"></div>
+    <div class="hint-txt">Leere Odometer-/SoC-/Range-Felder werden mit dem letzten Collector-Stand zum gewählten Zeitpunkt befüllt.</div>
+    <datalist id="actList"></datalist>
+  </div>
+
+  <div class="toolbar">
+    <h2 style="margin:0;">Verlauf</h2>
+    <label class="hint-txt" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="showPh" style="min-width:0;"> Platzhalter-Spalten anzeigen</label>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Zeitpunkt (Zürich)</th><th>Activity</th><th>Kommentar</th>
+        <th class="num">Odometer</th><th class="num">SoC %</th><th class="num">Range km</th>
+        <th class="ph">Platzhalter 1</th><th class="ph">Platzhalter 2</th><th class="ph">Platzhalter 3</th><th class="ph">Platzhalter 4</th><th class="ph">Platzhalter 5</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div id="status" class="status-msg"></div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+renderHeader("/activities");
+let rows = [], editId = null;
+const statusEl = document.getElementById("status");
+const PH = [1, 2, 3, 4, 5];
+
+function showPh() { return document.getElementById("showPh").checked; }
+function phCols() { document.querySelectorAll("th.ph").forEach((th) => (th.style.display = showPh() ? "" : "none")); }
+const inp = (k, v, cls = "", type = "text") => `<input data-k="${k}" type="${type}" class="${cls}" value="${esc(v)}">`;
+
+function rowHtml(a) {
+  const ph = showPh();
+  if (a.id === editId) {
+    return `<tr class="editing" data-id="${a.id}">
+      <td><input data-k="activity_time_utc" type="datetime-local" value="${utcToZurichInput(a.activity_time_utc)}"></td>
+      <td>${inp("activity", a.activity)}</td><td>${inp("activity_comment", a.activity_comment)}</td>
+      <td>${inp("odometer_km", a.odometer_km, "n")}</td><td>${inp("soc_percentage", a.soc_percentage, "n")}</td><td>${inp("range_km", a.range_km, "n")}</td>
+      ${PH.map((i) => (ph ? `<td>${inp("placeholder" + i, a["placeholder" + i])}</td>` : "")).join("")}
+      <td class="actions"><button class="sm" onclick="save(${a.id})">Speichern</button> <button class="sm ghost" onclick="cancel()">Abbrechen</button></td>
+    </tr>`;
+  }
+  return `<tr data-id="${a.id}">
+    <td class="nowrap">${fmtZurich(a.activity_time_utc)}</td><td>${esc(a.activity)}</td><td>${esc(a.activity_comment) || "–"}</td>
+    <td class="num">${fmt(a.odometer_km)}</td><td class="num">${fmt(a.soc_percentage)}</td><td class="num">${fmt(a.range_km)}</td>
+    ${PH.map((i) => (ph ? `<td>${esc(a["placeholder" + i])}</td>` : "")).join("")}
+    <td class="actions"><button class="sm ghost" onclick="edit(${a.id})">Bearbeiten</button> <button class="sm ghost danger" onclick="del(${a.id})">Löschen</button></td>
+  </tr>`;
+}
+
+function render() {
+  phCols();
+  document.getElementById("subline").textContent = `${rows.length} Activities`;
+  document.getElementById("tbody").innerHTML = rows.length
+    ? rows.map(rowHtml).join("")
+    : `<tr><td colspan="12" class="empty">Noch keine Activities</td></tr>`;
+  document.getElementById("actList").innerHTML = [...new Set(rows.map((r) => r.activity))].map((a) => `<option value="${esc(a)}">`).join("");
+}
+
+function edit(id) { editId = id; render(); }
+function cancel() { editId = null; render(); setStatus(statusEl, ""); }
+
+async function save(id) {
+  const tr = document.querySelector(`tr[data-id="${id}"]`);
+  const body = {};
+  tr.querySelectorAll("input[data-k]").forEach((i) => {
+    body[i.dataset.k] = i.dataset.k === "activity_time_utc" ? zurichInputToUtc(i.value) : i.value;
+  });
+  setStatus(statusEl, "Speichere…", "pending");
+  try {
+    const { activity } = await api(`/api/activities/${id}`, { method: "PATCH", body });
+    rows = rows.map((r) => (r.id === id ? activity : r)).sort(byTime);
+    editId = null; render(); setStatus(statusEl, "Gespeichert", "ok");
+  } catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+async function del(id) {
+  const a = rows.find((r) => r.id === id);
+  if (!confirm(`Activity «${a.activity}» vom ${fmtZurich(a.activity_time_utc)} endgültig löschen?`)) return;
+  try {
+    await api(`/api/activities/${id}`, { method: "DELETE", body: {} });
+    rows = rows.filter((r) => r.id !== id); render(); setStatus(statusEl, "Gelöscht", "ok");
+  } catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+async function add() {
+  const st = document.getElementById("addStatus");
+  const time = document.getElementById("nTime").value;
+  const act = document.getElementById("nAct").value.trim();
+  if (!time || !act) { setStatus(st, "Zeitpunkt und Activity sind erforderlich", "err"); return; }
+  const body = { activity_time_utc: zurichInputToUtc(time), activity: act, activity_comment: document.getElementById("nCom").value };
+  for (const [id, k] of [["nOdo", "odometer_km"], ["nSoc", "soc_percentage"], ["nRng", "range_km"]]) {
+    const v = document.getElementById(id).value; if (v !== "") body[k] = v;
+  }
+  setStatus(st, "Speichere…", "pending");
+  try {
+    const { activity } = await api("/api/activities", { method: "POST", body });
+    rows = [activity, ...rows].sort(byTime); render();
+    ["nAct", "nCom", "nOdo", "nSoc", "nRng"].forEach((id) => (document.getElementById(id).value = ""));
+    setStatus(st, "Hinzugefügt", "ok");
+  } catch (e) { setStatus(st, e.message, "err"); }
+}
+
+const byTime = (a, b) => (a.activity_time_utc < b.activity_time_utc ? 1 : a.activity_time_utc > b.activity_time_utc ? -1 : b.id - a.id);
+
+document.getElementById("showPh").addEventListener("change", render);
+document.getElementById("nTime").value = utcToZurichInput(nowUtcStr());
+(async () => {
+  try { ({ activities: rows } = await api("/api/activities")); render(); }
+  catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+})();
+</script>
+</body>
+</html>

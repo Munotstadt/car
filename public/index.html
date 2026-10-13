@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Munotstadt Car · Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="header"></div>
+<div class="wrap">
+  <h1>Dashboard</h1>
+  <div class="sub"><span class="live-dot" id="liveDot"></span><span id="subline">Lade Daten…</span></div>
+
+  <div class="toolbar">
+    <div class="seg" id="range">
+      <button data-days="7">7 Tage</button>
+      <button data-days="30" class="active">30 Tage</button>
+      <button data-days="90">90 Tage</button>
+      <button data-days="0">Alles</button>
+    </div>
+    <div class="hint-txt" id="meta"></div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile c-odo"><div class="label">Kilometerstand</div><div class="value" id="vOdo">–</div><div class="delta" id="dOdo"></div><div class="chart" id="chOdo"></div></div>
+    <div class="tile c-soc"><div class="label">SoC</div><div class="value" id="vSoc">–</div><div class="delta" id="dSoc"></div><div class="chart" id="chSoc"></div></div>
+    <div class="tile c-range"><div class="label">Reichweite</div><div class="value" id="vRange">–</div><div class="delta" id="dRange"></div><div class="chart" id="chRange"></div></div>
+  </div>
+  <div class="footer">Quelle: Škoda-Collector (D1 «car»)</div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+renderHeader("/");
+let days = 30;
+
+function delta(el, series, key, unit, dec) {
+  const v = series.map((r) => r[key]).filter((x) => x !== null && x !== undefined);
+  if (v.length < 2) { el.textContent = ""; return; }
+  const d = v[v.length - 1] - v[0];
+  const cls = d > 0 ? "up" : d < 0 ? "down" : "";
+  el.innerHTML = `Zeitraum: <span class="${cls}">${d > 0 ? "+" : ""}${fmt(d, dec)} ${unit}</span>`;
+}
+
+async function load() {
+  try {
+    const { latest, series } = await api(`/api/dashboard?days=${days}`);
+    if (latest) {
+      document.getElementById("vOdo").innerHTML = `${fmt(latest.odometer_km)} <small>km</small>`;
+      document.getElementById("vSoc").innerHTML = `${fmt(latest.soc_percent)} <small>%</small>`;
+      document.getElementById("vRange").innerHTML = `${fmt(latest.range_km)} <small>km</small>`;
+      const seen = latest.last_seen_utc || latest.collected_at_utc;
+      const ageMin = (Date.now() - parseUtc(seen)) / 60000;
+      document.getElementById("liveDot").classList.toggle("stale", ageMin > 180);
+      document.getElementById("subline").textContent =
+        `Stand ${fmtZurich(latest.collected_at_utc)} · ${latest.parking_state === "PARKED" ? "parkiert" : latest.parking_state || ""}` +
+        (latest.charging_state ? ` · ${latest.charging_state}` : "");
+      document.getElementById("meta").textContent = latest.address || "";
+    }
+    const pts = (key) => series.map((r) => ({ t: parseUtc(r.t), v: r[key] }));
+    lineChart(document.getElementById("chOdo"), pts("odometer_km"), { color: "#1f6feb", unit: "km" });
+    lineChart(document.getElementById("chSoc"), pts("soc_percent"), { color: "#7c3aed", unit: "%", clamp: [0, 100] });
+    lineChart(document.getElementById("chRange"), pts("range_km"), { color: "#0f9b8e", unit: "km", clamp: [0, Infinity] });
+    delta(document.getElementById("dOdo"), series, "odometer_km", "km", 0);
+    delta(document.getElementById("dSoc"), series, "soc_percent", "%", 0);
+    delta(document.getElementById("dRange"), series, "range_km", "km", 0);
+  } catch (e) {
+    document.getElementById("subline").textContent = "Fehler: " + e.message;
+  }
+}
+
+document.querySelectorAll("#range button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("#range button").forEach((x) => x.classList.toggle("active", x === b));
+  days = Number(b.dataset.days);
+  load();
+}));
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Munotstadt Car · Trips</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="header"></div>
+<div class="wrap wide">
+  <h1>Trips</h1>
+  <div class="sub" id="subline">Lade Trips…</div>
+
+  <div class="toolbar">
+    <div class="row">
+      <div class="field"><label for="yearSel">Jahr</label><select id="yearSel"></select></div>
+      <div class="field"><label for="search">Suche</label><input id="search" placeholder="Adresse, Klassifizierung…"></div>
+    </div>
+    <div id="status" class="status-msg"></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Start</th><th>Ende</th><th>Von</th><th>Nach</th>
+        <th class="num">km</th><th class="num">kWh</th><th class="num">kWh/100km</th>
+        <th>SoC start → ende (%)</th><th>Odo start → ende</th>
+        <th class="num">°C</th><th>Wetter</th><th>Reifen</th><th>Klassifizierung</th><th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="hint-txt">«Bearbeiten» öffnet die Zeile. kWh/100km wird beim Speichern aus km und kWh neu berechnet. Zeiten in Zürcher Zeit.</div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+renderHeader("/trips");
+let trips = [], editId = null;
+const statusEl = document.getElementById("status");
+
+function inp(id, key, val, cls = "") {
+  return `<input data-k="${key}" class="${cls}" value="${esc(val)}">`;
+}
+
+function rowHtml(t) {
+  if (t.id === editId) {
+    return `<tr class="editing" data-id="${t.id}">
+      <td class="nowrap">${fmtZurich(t.start_utc)}</td><td class="nowrap">${fmtZurich(t.end_utc)}</td>
+      <td>${inp(0, "start_address", t.start_address)}</td><td>${inp(0, "end_address", t.end_address)}</td>
+      <td>${inp(0, "distance_km", t.distance_km, "n")}</td><td>${inp(0, "consumption_kwh", t.consumption_kwh, "n")}</td>
+      <td class="num">${fmt(t.consumption_kwh_per_100km, 1)}</td>
+      <td><div class="pair">${inp(0, "start_soc_percent", t.start_soc_percent, "n")}→${inp(0, "end_soc_percent", t.end_soc_percent, "n")}</div></td>
+      <td><div class="pair">${inp(0, "start_odometer_km", t.start_odometer_km, "n")}→${inp(0, "end_odometer_km", t.end_odometer_km, "n")}</div></td>
+      <td>${inp(0, "temperature_c", t.temperature_c, "n")}</td><td>${inp(0, "weather", t.weather)}</td>
+      <td>${inp(0, "tires", t.tires)}</td><td>${inp(0, "classification", t.classification)}</td>
+      <td class="actions"><button class="sm" onclick="save(${t.id})">Speichern</button> <button class="sm ghost" onclick="cancel()">Abbrechen</button></td>
+    </tr>`;
+  }
+  return `<tr data-id="${t.id}">
+    <td class="nowrap">${fmtZurich(t.start_utc)}</td><td class="nowrap">${fmtZurich(t.end_utc)}</td>
+    <td class="addr" title="${esc(t.start_address)}">${esc(t.start_address) || "–"}</td>
+    <td class="addr" title="${esc(t.end_address)}">${esc(t.end_address) || "–"}</td>
+    <td class="num">${fmt(t.distance_km, 1)}</td><td class="num">${fmt(t.consumption_kwh, 1)}</td>
+    <td class="num">${fmt(t.consumption_kwh_per_100km, 1)}</td>
+    <td class="num">${fmt(t.start_soc_percent)} → ${fmt(t.end_soc_percent)}</td>
+    <td class="num">${fmt(t.start_odometer_km)} → ${fmt(t.end_odometer_km)}</td>
+    <td class="num">${fmt(t.temperature_c, 1)}</td><td>${esc(t.weather) || "–"}</td>
+    <td>${esc(t.tires) || "–"}</td><td>${esc(t.classification) || "–"}</td>
+    <td class="actions"><button class="sm ghost" onclick="edit(${t.id})">Bearbeiten</button></td>
+  </tr>`;
+}
+
+function visible() {
+  const y = document.getElementById("yearSel").value;
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  return trips.filter((t) =>
+    (y === "all" || t.start_utc.startsWith(y)) &&
+    (!q || [t.start_address, t.end_address, t.classification, t.weather, t.tires].some((s) => (s || "").toLowerCase().includes(q))));
+}
+
+function render() {
+  const list = visible();
+  const km = list.reduce((s, t) => s + (t.distance_km || 0), 0);
+  document.getElementById("subline").textContent = `${list.length} Trips · ${fmt(km, 1)} km`;
+  document.getElementById("tbody").innerHTML = list.length
+    ? list.map(rowHtml).join("")
+    : `<tr><td colspan="14" class="empty">Keine Trips</td></tr>`;
+}
+
+function edit(id) { editId = id; render(); }
+function cancel() { editId = null; render(); setStatus(statusEl, ""); }
+
+async function save(id) {
+  const tr = document.querySelector(`tr[data-id="${id}"]`);
+  const body = {};
+  tr.querySelectorAll("input[data-k]").forEach((i) => { body[i.dataset.k] = i.value; });
+  setStatus(statusEl, "Speichere…", "pending");
+  try {
+    const { trip } = await api(`/api/trips/${id}`, { method: "PATCH", body });
+    trips = trips.map((t) => (t.id === id ? trip : t));
+    editId = null; render();
+    setStatus(statusEl, "Gespeichert", "ok");
+  } catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+async function load() {
+  try {
+    ({ trips } = await api("/api/trips"));
+    const years = [...new Set(trips.map((t) => t.start_utc.slice(0, 4)))].sort().reverse();
+    const sel = document.getElementById("yearSel");
+    sel.innerHTML = `<option value="all">Alle</option>` + years.map((y) => `<option>${y}</option>`).join("");
+    if (years.length) sel.value = years[0];
+    render();
+  } catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+}
+document.getElementById("yearSel").addEventListener("change", () => { editId = null; render(); });
+document.getElementById("search").addEventListener("input", () => { editId = null; render(); });
+load();
+</script>
+</body>
+</html>
