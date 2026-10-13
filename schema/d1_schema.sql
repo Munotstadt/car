@@ -25,12 +25,13 @@ CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_t
 CREATE TABLE IF NOT EXISTS car_charging_tbl (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   charging_date_utc TEXT NOT NULL,      -- 'YYYY-MM-DD HH:MM:SS' UTC
-  activity TEXT NOT NULL,               -- 'Home' | 'Away'
+  activity TEXT NOT NULL,               -- 'External' (Default) | 'Home'
   odometer_km REAL, soc_start REAL, soc_end REAL, range_start REAL, range_end REAL,
   kwh_charged REAL, costs_chf REAL,
   "duration_hh:mm" TEXT,                -- 'hh:mm'
   temperature REAL, notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
   placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT,
-  created_at_utc TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at_utc TEXT NOT NULL DEFAULT (datetime('now')),
+  modified_at_utc TEXT                  -- bei Anlage = created_at_utc, bei jeder Änderung neu gesetzt
 );
 CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_date_utc);

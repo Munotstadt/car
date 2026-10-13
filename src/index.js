@@ -34,7 +34,7 @@ const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
       kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature REAL,
       notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
       placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT,
-      created_at_utc TEXT NOT NULL DEFAULT (datetime('now')))`;
+      created_at_utc TEXT NOT NULL DEFAULT (datetime('now')), modified_at_utc TEXT)`;
 
 let schemaReady = false;
 async function ensureSchema(db) {
@@ -52,6 +52,8 @@ async function ensureSchema(db) {
   ]);
   const col = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('skoda_trips_tbl') WHERE name = 'note'").first();
   if (!col) await db.prepare("ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT").run();
+  const mod = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'modified_at_utc'").first();
+  if (!mod) await db.prepare("ALTER TABLE car_charging_tbl ADD COLUMN modified_at_utc TEXT").run();
   schemaReady = true;
 }
 
@@ -99,7 +101,7 @@ const ACT_FIELDS = {
 };
 function parseActivityHA(v) {
   const t = parseText(v);
-  if (t !== "Home" && t !== "Away") throw new Error("Ungültige Activity (nur Home oder Away)");
+  if (t !== "Home" && t !== "External") throw new Error("Ungültige Activity (nur Home oder External)");
   return t;
 }
 function parseDuration(v) {
@@ -300,7 +302,7 @@ async function handleApi(request, env, url) {
       const time = String(body.charging_date_utc || "");
       if (!UTC_RE.test(time)) return json({ error: "charging_date_utc im Format YYYY-MM-DD HH:MM:SS erforderlich" }, 400);
       const f = pick(body, CHG_FIELDS);
-      if (!f.activity) return json({ error: "activity (Home/Away) erforderlich" }, 400);
+      if (!f.activity) return json({ error: "activity (Home/External) erforderlich" }, 400);
       // Leere Startwerte mit dem letzten Collector-Stand (<= Zeitpunkt) vorbelegen
       const snap = await db.prepare(
         `SELECT odometer_km, soc_percent, range_km FROM skoda_collector_tbl
@@ -309,8 +311,8 @@ async function handleApi(request, env, url) {
       if (!("soc_start" in f)) f.soc_start = snap?.soc_percent ?? null;
       if (!("range_start" in f)) f.range_start = snap?.range_km ?? null;
       const cols = ["charging_date_utc", ...Object.keys(f)];
-      const res = await db.prepare(`INSERT INTO car_charging_tbl (${cols.map((c) => `"${c}"`).join(", ")}, created_at_utc)
-        VALUES (${cols.map(() => "?").join(", ")}, datetime('now'))`).bind(time, ...Object.values(f)).run();
+      const res = await db.prepare(`INSERT INTO car_charging_tbl (${cols.map((c) => `"${c}"`).join(", ")}, created_at_utc, modified_at_utc)
+        VALUES (${cols.map(() => "?").join(", ")}, datetime('now'), datetime('now'))`).bind(time, ...Object.values(f)).run();
       const row = await db.prepare("SELECT * FROM car_charging_tbl WHERE id = ?").bind(res.meta.last_row_id).first();
       return json({ charging: row }, 201);
     }
@@ -326,7 +328,7 @@ async function handleApi(request, env, url) {
       }
       const keys = Object.keys(fields);
       if (!keys.length) return json({ error: "Keine änderbaren Felder übergeben" }, 400);
-      const res = await db.prepare(`UPDATE car_charging_tbl SET ${keys.map((k) => `"${k}" = ?`).join(", ")} WHERE id = ?`)
+      const res = await db.prepare(`UPDATE car_charging_tbl SET ${keys.map((k) => `"${k}" = ?`).join(", ")}, modified_at_utc = datetime('now') WHERE id = ?`)
         .bind(...keys.map((k) => fields[k]), id).run();
       if (!res.meta.changes) return json({ error: "Ladevorgang nicht gefunden" }, 404);
       const row = await db.prepare("SELECT * FROM car_charging_tbl WHERE id = ?").bind(id).first();
