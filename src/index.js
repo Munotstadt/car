@@ -108,6 +108,15 @@ async function handleApi(request, env, url) {
     if (path === "/api/dashboard" && method === "GET") {
       const days = Math.max(0, Math.min(3650, parseInt(url.searchParams.get("days") || "30", 10) || 0));
       const latest = await db.prepare("SELECT * FROM skoda_collector_tbl ORDER BY collected_at_utc DESC LIMIT 1").first();
+      // Fehlende Werte (z.B. migrierte Zeilen ohne Odometer) mit dem jeweils letzten vorhandenen Wert füllen
+      if (latest) {
+        for (const col of ["odometer_km", "soc_percent", "range_km"]) {
+          if (latest[col] === null || latest[col] === undefined) {
+            const r = await db.prepare(`SELECT ${col} AS v FROM skoda_collector_tbl WHERE ${col} IS NOT NULL ORDER BY collected_at_utc DESC LIMIT 1`).first();
+            if (r) latest[col] = r.v;
+          }
+        }
+      }
       const q = days > 0
         ? db.prepare(`SELECT collected_at_utc AS t, odometer_km, soc_percent, range_km FROM skoda_collector_tbl
                       WHERE collected_at_utc >= datetime('now', ?) ORDER BY collected_at_utc`).bind(`-${days} days`)
