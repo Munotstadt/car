@@ -11,26 +11,21 @@ Dashboard für die Škoda-Enyaq-Daten (Cloudflare Worker + D1 `car`), Layout ana
 
 ## Aufbau
 
-- `src/index.js` – Worker: Login (Google Authenticator / TOTP), JSON-API, Auslieferung von `public/`
+- `src/index.js` – Worker: JSON-API und Auslieferung von `public/`
 - `public/` – statische Seiten (HTML/CSS/JS, kein Build-Schritt)
-- `schema/d1_schema.sql` – Ergänzungen zur D1-DB (`skoda_activites_tbl`, Login-Tabellen); der Worker legt sie bei Bedarf selbst an
+- `schema/d1_schema.sql` – Ergänzungen zur D1-DB (`skoda_activites_tbl`); der Worker legt sie bei Bedarf selbst an
 - `wrangler.jsonc` – Worker-Konfiguration (Custom Domain `car.munot.app`, D1-Binding `DB` → `car`)
 
-## Login (Google Authenticator)
+## Login (Google-SSO via Cloudflare Access)
 
-Alle Seiten und `/api/*` sind nur mit Session-Cookie erreichbar; Login unter `/login` mit dem 6-stelligen TOTP-Code.
-Schutz: 5 Fehlversuche pro IP / 20 global je 15 Min., jeder Code nur einmal verwendbar, Session 30 Tage (HttpOnly, Secure, SameSite=Strict).
+Wie bei energymanager: Der Schutz liegt komplett vor dem Worker. `workers.dev` und Preview-URLs sind deaktiviert,
+erreichbar ist nur `car.munot.app`. Der Worker selbst enthält keinen Login.
 
-Einmalige Einrichtung:
+Einrichtung (Cloudflare Zero Trust → Access → Applications):
 
-```bash
-node scripts/gen-totp.mjs                 # gibt TOTP_SECRET + otpauth-URI aus
-npx wrangler secret put TOTP_SECRET       # Secret einfügen
-npx wrangler secret put SESSION_SECRET    # z.B. Ausgabe von: openssl rand -hex 32
-```
-
-Das Secret in Google Authenticator per «Setup-Schlüssel eingeben» (zeitbasiert) erfassen oder die otpauth-URI als QR-Code darstellen.
-Secrets können alternativ im Cloudflare-Dashboard (Worker → Settings → Variables and Secrets) gesetzt werden.
+1. Bestehende Self-hosted-Application (die von energy.munot.app) um den Hostnamen `car.munot.app` ergänzen,
+   oder eine neue Application `car.munot.app` mit derselben Policy (Google-Login, deine E-Mail) anlegen.
+2. Logout-Link in der Navigation: `/cdn-cgi/access/logout`.
 
 ## Deployment
 

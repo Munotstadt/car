@@ -3,7 +3,11 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-01",
 
-  // Statische Seiten (public/) werden vom Worker nach dem Login-Check ausgeliefert.
+  // Nur ueber car.munot.app (hinter Cloudflare Access) erreichbar, nicht ueber workers.dev.
+  "workers_dev": false,
+  "preview_urls": false,
+
+  // Statische Seiten (public/) werden vom Worker ausgeliefert (Zugriffsschutz: Cloudflare Access).
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -23,8 +27,4 @@
       "database_id": "8dcdf6f9-0ccb-4608-bb7d-90580afdc02f"
     }
   ]
-
-  // Secrets NICHT hier eintragen, sondern per:
-  //   wrangler secret put TOTP_SECRET      (Base32-Secret fuer Google Authenticator)
-  //   wrangler secret put SESSION_SECRET   (z.B. openssl rand -hex 32)
 }

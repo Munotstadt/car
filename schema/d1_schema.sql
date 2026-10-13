@@ -17,14 +17,3 @@ CREATE TABLE IF NOT EXISTS skoda_activites_tbl (
   at_date_utc TEXT NOT NULL             -- 'YYYY-MM-DD' UTC (aus activity_time_utc)
 );
 CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc);
-
--- Login-Schutz (Google Authenticator / TOTP)
-CREATE TABLE IF NOT EXISTS auth_attempts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ip TEXT NOT NULL,
-  ts INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS auth_state (
-  key TEXT PRIMARY KEY,
-  value TEXT
-);

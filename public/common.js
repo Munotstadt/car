@@ -15,7 +15,7 @@ function renderHeader(activePath) {
       <div class="brand">Munotstadt <span>Car</span></div>
       <div class="nav-right">
         <div class="nav-links">${links}</div>
-        <a href="/logout" class="logout-link">Logout</a>
+        <a href="/cdn-cgi/access/logout" class="logout-link">Logout</a>
       </div>
     </header>`;
 }

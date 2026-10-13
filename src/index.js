@@ -1,15 +1,11 @@
 /**
  * car.munot.app
  *
- * Cloudflare Worker: Login per Google Authenticator (TOTP), JSON-API auf D1 "car"
- * und Auslieferung der statischen Seiten aus ./public (Assets-Binding).
+ * Cloudflare Worker: JSON-API auf D1 "car" und Auslieferung der statischen Seiten
+ * aus ./public (Assets-Binding). Der Zugriffsschutz (Google-Login) laeuft komplett
+ * ueber Cloudflare Access vor car.munot.app -- unauthentifizierte Requests erreichen
+ * den Worker gar nicht erst (workers.dev ist deaktiviert, siehe wrangler.jsonc).
  */
-
-const COOKIE = "car_session";
-const SESSION_DAYS = 30;
-const MAX_FAILS_PER_IP = 5;
-const MAX_FAILS_GLOBAL = 20;
-const FAIL_WINDOW_S = 15 * 60;
 
 /* ---------------------------------------------------------------------- *
  * Helpers
@@ -27,88 +23,6 @@ function html(body, status = 200) {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
 }
-const enc = new TextEncoder();
-
-function toHex(buf) {
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-function safeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return r === 0;
-}
-
-/* ---------------------------------------------------------------------- *
- * TOTP (RFC 6238, SHA-1, 6 Stellen, 30 s) -- kompatibel mit Google Authenticator
- * ---------------------------------------------------------------------- */
-
-export function base32Decode(s) {
-  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  s = s.replace(/=+$/, "").replace(/\s+/g, "").toUpperCase();
-  let bits = 0, val = 0;
-  const out = [];
-  for (const ch of s) {
-    const i = A.indexOf(ch);
-    if (i < 0) throw new Error("Ungueltiges Base32-Zeichen");
-    val = (val << 5) | i;
-    bits += 5;
-    if (bits >= 8) {
-      out.push((val >>> (bits - 8)) & 255);
-      bits -= 8;
-    }
-    val &= (1 << bits) - 1;
-  }
-  return new Uint8Array(out);
-}
-
-export async function hotp(keyBytes, counter) {
-  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
-  const msg = new Uint8Array(8);
-  let c = counter;
-  for (let i = 7; i >= 0; i--) { msg[i] = c & 255; c = Math.floor(c / 256); }
-  const h = new Uint8Array(await crypto.subtle.sign("HMAC", key, msg));
-  const o = h[19] & 15;
-  const bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
-  return String(bin % 1000000).padStart(6, "0");
-}
-
-/** Liefert den passenden Zeitschritt (Fenster +-1) oder null. */
-export async function verifyTotp(secretB32, code, nowMs = Date.now()) {
-  const keyBytes = base32Decode(secretB32);
-  const step = Math.floor(nowMs / 30000);
-  let match = null;
-  for (const d of [-1, 0, 1]) {
-    const expected = await hotp(keyBytes, step + d);
-    if (safeEqual(expected, code) && match === null) match = step + d;
-  }
-  return match;
-}
-
-/* ---------------------------------------------------------------------- *
- * Session (signiertes Cookie)
- * ---------------------------------------------------------------------- */
-
-async function hmacHex(secret, data) {
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return toHex(await crypto.subtle.sign("HMAC", key, enc.encode(data)));
-}
-async function makeSession(env) {
-  const exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
-  return `${exp}.${await hmacHex(env.SESSION_SECRET, "session:" + exp)}`;
-}
-async function isAuthed(request, env) {
-  const m = (request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`));
-  if (!m) return false;
-  const [exp, sig] = m[1].split(".");
-  if (!exp || !sig || !/^\d+$/.test(exp)) return false;
-  if (Number(exp) < Date.now() / 1000) return false;
-  return safeEqual(sig, await hmacHex(env.SESSION_SECRET, "session:" + exp));
-}
-function cookieHeader(value, maxAge) {
-  return `${COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
-}
-
 /* ---------------------------------------------------------------------- *
  * Schema (idempotent)
  * ---------------------------------------------------------------------- */
@@ -124,85 +38,8 @@ async function ensureSchema(db) {
       placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT, placeholder4 TEXT, placeholder5 TEXT,
       at_date_utc TEXT NOT NULL)`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS auth_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, ts INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS auth_state (key TEXT PRIMARY KEY, value TEXT)"),
   ]);
   schemaReady = true;
-}
-
-/* ---------------------------------------------------------------------- *
- * Login
- * ---------------------------------------------------------------------- */
-
-const LOGIN_HTML = `<!DOCTYPE html>
-<html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Munotstadt Car · Login</title>
-<link rel="stylesheet" href="/style.css"></head>
-<body>
-<header class="topbar"><div class="brand">Munotstadt <span>Car</span></div></header>
-<div class="login-wrap"><div class="login-card">
-  <h1>Anmelden</h1>
-  <p>6-stelliger Code aus Google Authenticator.</p>
-  <input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="123456" autofocus>
-  <button id="btn" onclick="login()">Anmelden</button>
-  <div id="msg" class="status-msg"></div>
-</div></div>
-<script>
-const codeEl=document.getElementById('code'), msg=document.getElementById('msg');
-codeEl.addEventListener('keydown',e=>{ if(e.key==='Enter') login(); });
-codeEl.addEventListener('input',()=>{ if(codeEl.value.replace(/\\D/g,'').length===6) login(); });
-let busy=false;
-async function login(){
-  const code=codeEl.value.replace(/\\D/g,'');
-  if(busy||code.length!==6){ return; }
-  busy=true; msg.className='status-msg pending'; msg.textContent='Prüfe…';
-  try{
-    const r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})});
-    const j=await r.json().catch(()=>({}));
-    if(r.ok){ location.href='/'; return; }
-    msg.className='status-msg err'; msg.textContent=j.error||('Fehler '+r.status); codeEl.select();
-  }catch(e){ msg.className='status-msg err'; msg.textContent='Netzwerkfehler'; }
-  busy=false;
-}
-</script></body></html>`;
-
-async function handleLogin(request, env) {
-  const ip = request.headers.get("cf-connecting-ip") || "unknown";
-  const now = Math.floor(Date.now() / 1000);
-  const since = now - FAIL_WINDOW_S;
-
-  const perIp = await env.DB.prepare("SELECT COUNT(*) n FROM auth_attempts WHERE ip = ? AND ts > ?").bind(ip, since).first();
-  const global = await env.DB.prepare("SELECT COUNT(*) n FROM auth_attempts WHERE ts > ?").bind(since).first();
-  if (perIp.n >= MAX_FAILS_PER_IP || global.n >= MAX_FAILS_GLOBAL) {
-    return json({ error: "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen." }, 429);
-  }
-
-  let body;
-  try { body = await request.json(); } catch { return json({ error: "Ungültige Anfrage" }, 400); }
-  const code = String(body?.code || "").replace(/\D/g, "");
-
-  const step = code.length === 6 ? await verifyTotp(env.TOTP_SECRET, code) : null;
-  let ok = false;
-  if (step !== null) {
-    // Replay-Schutz: jeder Zeitschritt darf nur einmal verwendet werden.
-    const last = await env.DB.prepare("SELECT value FROM auth_state WHERE key = 'last_totp_step'").first();
-    if (!last || step > Number(last.value)) {
-      await env.DB.prepare("INSERT INTO auth_state (key, value) VALUES ('last_totp_step', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .bind(String(step)).run();
-      ok = true;
-    }
-  }
-
-  if (!ok) {
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO auth_attempts (ip, ts) VALUES (?, ?)").bind(ip, now),
-      env.DB.prepare("DELETE FROM auth_attempts WHERE ts < ?").bind(now - 86400),
-    ]);
-    return json({ error: "Code ungültig oder bereits verwendet" }, 401);
-  }
-
-  await env.DB.prepare("DELETE FROM auth_attempts WHERE ip = ?").bind(ip).run();
-  return json({ ok: true }, 200, { "set-cookie": cookieHeader(await makeSession(env), SESSION_DAYS * 86400) });
 }
 
 /* ---------------------------------------------------------------------- *
@@ -383,26 +220,8 @@ async function handleApi(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const path = url.pathname;
-
-    if (!env.TOTP_SECRET || !env.SESSION_SECRET) {
-      return html("<h1>Konfiguration unvollständig</h1><p>Secrets TOTP_SECRET und SESSION_SECRET sind nicht gesetzt.</p>", 503);
-    }
     await ensureSchema(env.DB);
-
-    if (path === "/login" && request.method === "GET") return html(LOGIN_HTML);
-    if (path === "/style.css") return env.ASSETS.fetch(request); // Login-Seite braucht das Stylesheet
-    if (path === "/api/login" && request.method === "POST") return handleLogin(request, env);
-    if (path === "/logout") {
-      return new Response(null, { status: 302, headers: { location: "/login", "set-cookie": cookieHeader("", 0) } });
-    }
-
-    if (!(await isAuthed(request, env))) {
-      if (path.startsWith("/api/")) return json({ error: "Nicht angemeldet" }, 401);
-      return new Response(null, { status: 302, headers: { location: "/login" } });
-    }
-
-    if (path.startsWith("/api/")) return handleApi(request, env, url);
+    if (url.pathname.startsWith("/api/")) return handleApi(request, env, url);
     return env.ASSETS.fetch(request);
   },
 };
