@@ -79,9 +79,9 @@ const statusEl = document.getElementById("status");
 const formSt = document.getElementById("formStatus");
 const $ = (id) => document.getElementById(id);
 // Formularfeld -> DB-Spalte
-const MAP = [["fAct", "activity"], ["fOdo", "odometer_km"], ["fSocS", "soc_start"], ["fSocE", "soc_end"], ["fRngS", "range_start"], ["fRngE", "range_end"],
-  ["fKwh", "kwh_charged"], ["fChf", "costs_chf"], ["fType", "charging_type"], ["fDur", "duration_hh:mm"], ["fTemp", "temperature"], ["fLoc", "location"], ["fStation", "station_name"],
-  ["fCard", "charging_card"], ["fNotes", "notes"]];
+const MAP = [["fAct", "activity"], ["fOdo", "odometer_km"], ["fSocS", "start_soc_percent"], ["fSocE", "end_soc_percent"], ["fRngS", "start_range_km"], ["fRngE", "end_range_km"],
+  ["fKwh", "kwh_charged"], ["fChf", "costs_chf"], ["fType", "charging_type"], ["fDur", "duration_hh:mm"], ["fTemp", "temperature_c"], ["fLoc", "location"], ["fStation", "station_name"],
+  ["fCard", "charging_card"], ["fNotes", "note"]];
 const showPh = () => $("showPh").checked;
 const byTime = (a, b) => (a.charging_date_utc < b.charging_date_utc ? 1 : a.charging_date_utc > b.charging_date_utc ? -1 : b.id - a.id);
 
@@ -91,10 +91,10 @@ function rowHtml(r) {
   const td = (v) => `<td class="addr" title="${esc(v)}">${esc(v) || "–"}</td>`;
   return `<tr>
     <td class="nowrap">${fmtZurich(r.charging_date_utc)}</td><td>${esc(r.activity)}</td><td class="num">${fmt(r.odometer_km)}</td>
-    <td class="num">${fmt(r.soc_start)} → ${fmt(r.soc_end)}</td><td class="num">${fmt(r.range_start)} → ${fmt(r.range_end)}</td>
+    <td class="num">${fmt(r.start_soc_percent)} → ${fmt(r.end_soc_percent)}</td><td class="num">${fmt(r.start_range_km)} → ${fmt(r.end_range_km)}</td>
     <td class="num">${fmt(r.kwh_charged, 2)}</td><td class="num">${fmt(r.costs_chf, 2)}</td><td class="num">${fmt(perKwh, 3)}</td>
-    <td>${esc(r.charging_type) || "–"}</td><td class="nowrap">${esc(r["duration_hh:mm"]) || "–"}</td><td class="num">${fmt(r.temperature, 1)}</td>
-    ${td(r.location)}${td(r.station_name)}${td(r.charging_card)}${td(r.notes)}${td(r.source)}
+    <td>${esc(r.charging_type) || "–"}</td><td class="nowrap">${esc(r["duration_hh:mm"]) || "–"}</td><td class="num">${fmt(r.temperature_c, 1)}</td>
+    ${td(r.location)}${td(r.station_name)}${td(r.charging_card)}${td(r.note)}${td(r.source)}
     ${ph ? `<td>${esc(r.placeholder2)}</td><td class="nowrap">${fmtZurich(r.created_at_utc)}</td><td class="nowrap">${fmtZurich(r.modified_at_utc)}</td>` : ""}
     <td class="actions"><button class="sm ghost" onclick="edit(${r.id})">Bearbeiten</button> <button class="sm ghost danger" onclick="del(${r.id})">Löschen</button></td>
   </tr>`;
@@ -105,8 +105,8 @@ function visible() {
   if (q) {
     const terms = q.split(/\s+/);
     return rows.filter((r) => {
-      const hay = [fmtZurich(r.charging_date_utc), r.charging_date_utc, r.activity, r.odometer_km, r.soc_start, r.soc_end, r.range_start, r.range_end, r.kwh_charged, r.costs_chf,
-        r["duration_hh:mm"], r.temperature, r.notes, r.location, r.station_name, r.charging_card, r.charging_type, r.source, r.placeholder2].map((v) => (v ?? "")).join(" ").toLowerCase();
+      const hay = [fmtZurich(r.charging_date_utc), r.charging_date_utc, r.activity, r.odometer_km, r.start_soc_percent, r.end_soc_percent, r.start_range_km, r.end_range_km, r.kwh_charged, r.costs_chf,
+        r["duration_hh:mm"], r.temperature_c, r.note, r.location, r.station_name, r.charging_card, r.charging_type, r.source, r.placeholder2].map((v) => (v ?? "")).join(" ").toLowerCase();
       return terms.every((t) => hay.includes(t));
     });
   }

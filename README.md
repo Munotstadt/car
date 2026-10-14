@@ -7,6 +7,7 @@ Dashboard für die Škoda-Enyaq-Daten (Cloudflare Worker + D1 `car`), Layout ana
 | Dashboard | `/` | Kacheln km-Stand, SoC, Reichweite je mit Chart (7/30/90 Tage/Alles) |
 | Trips | `/trips` | Tabelle `skoda_trips_tbl`, Zeilen editierbar (Reifen: Sommer/Winter, Notiz) |
 | Charging | `/charging` | Ladevorgänge erfassen, anpassen und durchsuchen (Tabelle `car_charging_tbl`, Spalte `source`, Import: GoogleImport) |
+| Zustände | `/states` | Nur Anzeige: gemeinsame Zeitreihe (Collector, Trip-/Lade-Start und -Ende, Activities) aus dem D1-View `car_state_v` |
 | Statistics | `/statistics` | km YtD vs. PYtD, Tabelle Monat / km Monat, Streudiagramm Reichweite vs. SoC (Regression, Filter Reifen/Jahr) und Ø Reichweite bei 80 % SoC, Section Battery (Kapazität aus Ladevorgängen, Regression, Filter Ladetyp/Activity/Jahr) |
 | Activities | `/activities` | Tabelle `skoda_activites_tbl` (anlegen, ändern, löschen) |
 | Collector | `/collector` | Log der Tabelle `skoda_collector_tbl` (nur lesen, Filter Zeit/Source/fehlende Werte) |
@@ -39,3 +40,8 @@ Jeder Push auf `main` deployt automatisch. `munot.app` muss als Zone im selben C
 - Zeiten in der DB sind UTC (`YYYY-MM-DD HH:MM:SS`), Anzeige in Europe/Zurich.
 - Statistik-km stammen aus dem Odometer in `skoda_collector_tbl` (Monate in UTC): km Monat = höchster Stand des Monats minus höchster Stand der Vorperiode; YtD/PYtD jeweils bis zum heutigen Kalendertag. Der erste Monat mit Daten wird ab dem ersten Messwert gerechnet.
 - Beim Anlegen einer Activity werden leere Odometer/SoC/Range-Felder mit dem letzten Collector-Stand vorbelegt.
+
+
+## Spaltennamen
+
+Einheitlich (wie Collector/Trips): `odometer_km`, `soc_percent`, `range_km` (bei Paaren mit `start_`/`end_`), `temperature_c`, `note`. Charging und Activities wurden dafür umbenannt (`ensureSchema` führt `RENAME COLUMN` idempotent aus). Collector- und Trips-Tabelle wurden nicht angefasst, da sie von einem separaten Collector beschrieben werden.

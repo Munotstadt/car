@@ -30,11 +30,49 @@ function html(body, status = 200) {
 const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       charging_date_utc TEXT NOT NULL, activity TEXT NOT NULL,
-      odometer_km REAL, soc_start REAL, soc_end REAL, range_start REAL, range_end REAL,
-      kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature REAL,
-      notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
+      odometer_km REAL, start_soc_percent REAL, end_soc_percent REAL, start_range_km REAL, end_range_km REAL,
+      kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature_c REAL,
+      note TEXT, location TEXT, station_name TEXT, charging_card TEXT,
       charging_type TEXT, placeholder2 TEXT, source TEXT,
       created_at_utc TEXT NOT NULL DEFAULT (datetime('now')), modified_at_utc TEXT)`;
+
+// Einheitliche Zeitreihe aller Fahrzeugzustände (Collector, Trip-Start/-Ende, Lade-Start/-Ende, Activities).
+// Nur Lesezugriff; keine Daten werden kopiert. Zeilen ohne Odometer, SoC und Range werden ausgelassen.
+const CHG_DUR_MIN = `(CAST(substr("duration_hh:mm", 1, instr("duration_hh:mm", ':') - 1) AS INTEGER) * 60
+        + CAST(substr("duration_hh:mm", instr("duration_hh:mm", ':') + 1) AS INTEGER))`;
+// (D1 erlaubt höchstens 5 Terme pro UNION: darum zwei verschachtelte Gruppen à 3.)
+const STATE_VIEW_SQL = `CREATE VIEW car_state_v AS
+SELECT * FROM (
+  SELECT * FROM (
+    SELECT collected_at_utc AS state_time_utc, 'collector' AS kind, id AS ref_id,
+           odometer_km, soc_percent, range_km, address, source, NULL AS label
+      FROM skoda_collector_tbl
+    UNION ALL
+    SELECT start_utc, 'trip_start', id, start_odometer_km, start_soc_percent, start_range_km, start_address, source, classification
+      FROM skoda_trips_tbl
+    UNION ALL
+    SELECT end_utc, 'trip_end', id, end_odometer_km, end_soc_percent, end_range_km, end_address, source, classification
+      FROM skoda_trips_tbl WHERE end_utc IS NOT NULL
+  )
+  UNION ALL
+  SELECT * FROM (
+    SELECT charging_date_utc AS state_time_utc, 'charge_start' AS kind, id AS ref_id,
+           odometer_km, start_soc_percent AS soc_percent, start_range_km AS range_km, location AS address, source, activity AS label
+      FROM car_charging_tbl
+    UNION ALL
+    SELECT CASE WHEN "duration_hh:mm" IS NOT NULL THEN datetime(charging_date_utc, '+' || ${CHG_DUR_MIN} || ' minutes') ELSE charging_date_utc END,
+           'charge_end', id, odometer_km, end_soc_percent, end_range_km, location, source, activity
+      FROM car_charging_tbl WHERE end_soc_percent IS NOT NULL OR end_range_km IS NOT NULL
+    UNION ALL
+    SELECT activity_time_utc, 'activity', id, odometer_km, soc_percent, range_km, NULL, NULL, activity
+      FROM skoda_activites_tbl
+  )
+) WHERE odometer_km IS NOT NULL OR soc_percent IS NOT NULL OR range_km IS NOT NULL`;
+
+async function renameColumn(db, table, from, to) {
+  const has = await db.prepare(`SELECT 1 AS ok FROM pragma_table_info('${table}') WHERE name = ?`).bind(from).first();
+  if (has) await db.prepare(`ALTER TABLE ${table} RENAME COLUMN "${from}" TO "${to}"`).run();
+}
 
 let schemaReady = false;
 async function ensureSchema(db) {
@@ -42,8 +80,8 @@ async function ensureSchema(db) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS skoda_activites_tbl (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      activity_time_utc TEXT NOT NULL, activity TEXT NOT NULL, activity_comment TEXT,
-      odometer_km REAL, soc_percentage REAL, range_km REAL,
+      activity_time_utc TEXT NOT NULL, activity TEXT NOT NULL, note TEXT,
+      odometer_km REAL, soc_percent REAL, range_km REAL,
       placeholder1 TEXT, placeholder2 TEXT, placeholder3 TEXT, placeholder4 TEXT, placeholder5 TEXT,
       at_date_utc TEXT NOT NULL)`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc)"),
@@ -58,6 +96,14 @@ async function ensureSchema(db) {
   if (ph1) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder1 TO charging_type").run();
   const ph3 = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'placeholder3'").first();
   if (ph3) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder3 TO source").run();
+  // Spalten harmonisieren (Namen wie Collector/Trips: *_soc_percent, *_range_km, temperature_c, note)
+  for (const [from, to] of [["soc_start", "start_soc_percent"], ["soc_end", "end_soc_percent"], ["range_start", "start_range_km"],
+    ["range_end", "end_range_km"], ["temperature", "temperature_c"], ["notes", "note"]]) await renameColumn(db, "car_charging_tbl", from, to);
+  for (const [from, to] of [["soc_percentage", "soc_percent"], ["activity_comment", "note"]]) await renameColumn(db, "skoda_activites_tbl", from, to);
+  const view = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'car_state_v'").first();
+  if (!view || view.sql.trim() !== STATE_VIEW_SQL) {
+    await db.batch([db.prepare("DROP VIEW IF EXISTS car_state_v"), db.prepare(STATE_VIEW_SQL)]);
+  }
   schemaReady = true;
 }
 
@@ -98,8 +144,8 @@ const TRIP_FIELDS = {
   temperature_c: parseNum, weather: parseText, tires: parseTires, note: parseText,
 };
 const ACT_FIELDS = {
-  activity: parseText, activity_comment: parseText,
-  odometer_km: parseNum, soc_percentage: parseNum, range_km: parseNum,
+  activity: parseText, note: parseText,
+  odometer_km: parseNum, soc_percent: parseNum, range_km: parseNum,
   placeholder1: parseText, placeholder2: parseText, placeholder3: parseText,
   placeholder4: parseText, placeholder5: parseText,
 };
@@ -120,9 +166,9 @@ function parseDuration(v) {
 }
 const CHG_FIELDS = {
   activity: parseActivityHA,
-  odometer_km: parseNum, soc_start: parseNum, soc_end: parseNum, range_start: parseNum, range_end: parseNum,
-  kwh_charged: parseNum, costs_chf: parseNum, "duration_hh:mm": parseDuration, temperature: parseNum,
-  notes: parseText, location: parseText, station_name: parseText, charging_card: parseText,
+  odometer_km: parseNum, start_soc_percent: parseNum, end_soc_percent: parseNum, start_range_km: parseNum, end_range_km: parseNum,
+  kwh_charged: parseNum, costs_chf: parseNum, "duration_hh:mm": parseDuration, temperature_c: parseNum,
+  note: parseText, location: parseText, station_name: parseText, charging_card: parseText,
   charging_type: parseChargingType, placeholder2: parseText, source: parseText,
 };
 const UTC_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
@@ -231,7 +277,7 @@ async function handleApi(request, env, url) {
     if (path === "/api/range-soc" && method === "GET") {
       const { results } = await db.prepare(
         `SELECT collected_at_utc AS t, soc_percent AS soc, range_km AS rng,
-           (SELECT activity_comment FROM skoda_activites_tbl a
+           (SELECT note FROM skoda_activites_tbl a
              WHERE a.activity = 'Reifenwechsel' AND a.activity_time_utc <= c.collected_at_utc
              ORDER BY a.activity_time_utc DESC LIMIT 1) AS tires
          FROM skoda_collector_tbl c
@@ -244,11 +290,11 @@ async function handleApi(request, env, url) {
     // ---- Statistics: Batteriekapazität aus Ladevorgängen (kWh / ΔSoC) ----
     if (path === "/api/battery" && method === "GET") {
       const { results } = await db.prepare(
-        `SELECT id, charging_date_utc AS t, activity, charging_type, kwh_charged AS kwh, soc_start, soc_end
+        `SELECT id, charging_date_utc AS t, activity, charging_type, kwh_charged AS kwh, start_soc_percent, end_soc_percent
          FROM car_charging_tbl
-         WHERE kwh_charged > 10 AND soc_start IS NOT NULL AND soc_end IS NOT NULL AND (soc_end - soc_start) > 10
+         WHERE kwh_charged > 10 AND start_soc_percent IS NOT NULL AND end_soc_percent IS NOT NULL AND (end_soc_percent - start_soc_percent) > 10
          ORDER BY charging_date_utc`).all();
-      const charges = (results || []).map((r) => ({ ...r, capacity: (r.kwh / (r.soc_end - r.soc_start)) * 100 }));
+      const charges = (results || []).map((r) => ({ ...r, capacity: (r.kwh / (r.end_soc_percent - r.start_soc_percent)) * 100 }));
       return json({ charges });
     }
 
@@ -269,13 +315,13 @@ async function handleApi(request, env, url) {
          WHERE collected_at_utc <= ? ORDER BY collected_at_utc DESC LIMIT 1`).bind(time).first()
         || await db.prepare("SELECT odometer_km, soc_percent, range_km FROM skoda_collector_tbl ORDER BY collected_at_utc DESC LIMIT 1").first();
       const odo = "odometer_km" in f ? f.odometer_km : snap?.odometer_km ?? null;
-      const soc = "soc_percentage" in f ? f.soc_percentage : snap?.soc_percent ?? null;
+      const soc = "soc_percent" in f ? f.soc_percent : snap?.soc_percent ?? null;
       const rng = "range_km" in f ? f.range_km : snap?.range_km ?? null;
       const res = await db.prepare(
-        `INSERT INTO skoda_activites_tbl (activity_time_utc, activity, activity_comment, odometer_km, soc_percentage, range_km,
+        `INSERT INTO skoda_activites_tbl (activity_time_utc, activity, note, odometer_km, soc_percent, range_km,
            placeholder1, placeholder2, placeholder3, placeholder4, placeholder5, at_date_utc)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(time, f.activity, f.activity_comment ?? null, odo, soc, rng,
+        .bind(time, f.activity, f.note ?? null, odo, soc, rng,
           f.placeholder1 ?? null, f.placeholder2 ?? null, f.placeholder3 ?? null, f.placeholder4 ?? null, f.placeholder5 ?? null,
           time.slice(0, 10)).run();
       const row = await db.prepare("SELECT * FROM skoda_activites_tbl WHERE id = ?").bind(res.meta.last_row_id).first();
@@ -326,6 +372,24 @@ async function handleApi(request, env, url) {
       return json({ rows: results || [], total: total?.n ?? 0, sources: sources.map((r) => r.source) });
     }
 
+    // ---- Zustands-Zeitreihe (View car_state_v, nur lesen) ----
+    if (path === "/api/states" && method === "GET") {
+      const p = url.searchParams;
+      const where = [], binds = [];
+      const from = p.get("from"), to = p.get("to"), kind = p.get("kind");
+      if (from) { if (!UTC_RE.test(from)) return json({ error: "Ungültig: from" }, 400); where.push("state_time_utc >= ?"); binds.push(from); }
+      if (to) { if (!UTC_RE.test(to)) return json({ error: "Ungültig: to" }, 400); where.push("state_time_utc < ?"); binds.push(to); }
+      if (kind) { where.push("kind = ?"); binds.push(kind); }
+      const w = where.length ? "WHERE " + where.join(" AND ") : "";
+      const limit = Math.max(1, Math.min(1000, parseInt(p.get("limit") || "200", 10) || 200));
+      const offset = Math.max(0, parseInt(p.get("offset") || "0", 10) || 0);
+      const total = await db.prepare(`SELECT COUNT(*) AS n FROM car_state_v ${w}`).bind(...binds).first();
+      const { results } = await db.prepare(`SELECT * FROM car_state_v ${w} ORDER BY state_time_utc DESC, ref_id DESC LIMIT ? OFFSET ?`)
+        .bind(...binds, limit, offset).all();
+      const kinds = (await db.prepare("SELECT kind, COUNT(*) AS n FROM car_state_v GROUP BY kind ORDER BY kind").all()).results || [];
+      return json({ rows: results || [], total: total?.n ?? 0, kinds });
+    }
+
     // ---- Charging ----
     if (path === "/api/charging" && method === "GET") {
       const { results } = await db.prepare("SELECT * FROM car_charging_tbl ORDER BY charging_date_utc DESC, id DESC").all();
@@ -342,8 +406,8 @@ async function handleApi(request, env, url) {
         `SELECT odometer_km, soc_percent, range_km FROM skoda_collector_tbl
          WHERE collected_at_utc <= ? ORDER BY collected_at_utc DESC LIMIT 1`).bind(time).first();
       if (!("odometer_km" in f)) f.odometer_km = snap?.odometer_km ?? null;
-      if (!("soc_start" in f)) f.soc_start = snap?.soc_percent ?? null;
-      if (!("range_start" in f)) f.range_start = snap?.range_km ?? null;
+      if (!("start_soc_percent" in f)) f.start_soc_percent = snap?.soc_percent ?? null;
+      if (!("start_range_km" in f)) f.start_range_km = snap?.range_km ?? null;
       const cols = ["charging_date_utc", ...Object.keys(f)];
       const res = await db.prepare(`INSERT INTO car_charging_tbl (${cols.map((c) => `"${c}"`).join(", ")}, created_at_utc, modified_at_utc)
         VALUES (${cols.map(() => "?").join(", ")}, datetime('now'), datetime('now'))`).bind(time, ...Object.values(f)).run();

@@ -188,7 +188,7 @@ function bRender() {
     color: BT_COLOR[k],
     pts: sel.filter((c) => (c.charging_type || "none") === k).map((c) => ({
       x: decYear(c.t), y: c.capacity,
-      tip: `${fmtZurich(c.t)} · ${fmt(c.capacity, 1)} kWh · ${fmt(c.kwh, 1)} kWh / ${fmt(c.soc_end - c.soc_start)} % · ${c.activity}${c.charging_type ? " · " + c.charging_type : ""}`,
+      tip: `${fmtZurich(c.t)} · ${fmt(c.capacity, 1)} kWh · ${fmt(c.kwh, 1)} kWh / ${fmt(c.end_soc_percent - c.start_soc_percent)} % · ${c.activity}${c.charging_type ? " · " + c.charging_type : ""}`,
     })),
   }));
   const all = groups.flatMap((g) => g.pts);

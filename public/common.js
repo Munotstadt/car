@@ -7,6 +7,7 @@ const NAV = [
   ["/statistics", "Statistics"],
   ["/activities", "Activities"],
   ["/collector", "Collector"],
+  ["/states", "Zustände"],
 ];
 
 function renderHeader(activePath) {

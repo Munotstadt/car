@@ -64,15 +64,15 @@ function rowHtml(a) {
   if (a.id === editId) {
     return `<tr class="editing" data-id="${a.id}">
       <td><input data-k="activity_time_utc" type="datetime-local" value="${utcToZurichInput(a.activity_time_utc)}"></td>
-      <td>${inp("activity", a.activity)}</td><td>${inp("activity_comment", a.activity_comment)}</td>
-      <td>${inp("odometer_km", a.odometer_km, "n")}</td><td>${inp("soc_percentage", a.soc_percentage, "n")}</td><td>${inp("range_km", a.range_km, "n")}</td>
+      <td>${inp("activity", a.activity)}</td><td>${inp("note", a.note)}</td>
+      <td>${inp("odometer_km", a.odometer_km, "n")}</td><td>${inp("soc_percent", a.soc_percent, "n")}</td><td>${inp("range_km", a.range_km, "n")}</td>
       ${PH.map((i) => (ph ? `<td>${inp("placeholder" + i, a["placeholder" + i])}</td>` : "")).join("")}
       <td class="actions"><button class="sm" onclick="save(${a.id})">Speichern</button> <button class="sm ghost" onclick="cancel()">Abbrechen</button></td>
     </tr>`;
   }
   return `<tr data-id="${a.id}">
-    <td class="nowrap">${fmtZurich(a.activity_time_utc)}</td><td>${esc(a.activity)}</td><td>${esc(a.activity_comment) || "–"}</td>
-    <td class="num">${fmt(a.odometer_km)}</td><td class="num">${fmt(a.soc_percentage)}</td><td class="num">${fmt(a.range_km)}</td>
+    <td class="nowrap">${fmtZurich(a.activity_time_utc)}</td><td>${esc(a.activity)}</td><td>${esc(a.note) || "–"}</td>
+    <td class="num">${fmt(a.odometer_km)}</td><td class="num">${fmt(a.soc_percent)}</td><td class="num">${fmt(a.range_km)}</td>
     ${PH.map((i) => (ph ? `<td>${esc(a["placeholder" + i])}</td>` : "")).join("")}
     <td class="actions"><button class="sm ghost" onclick="edit(${a.id})">Bearbeiten</button> <button class="sm ghost danger" onclick="del(${a.id})">Löschen</button></td>
   </tr>`;
@@ -118,8 +118,8 @@ async function add() {
   const time = document.getElementById("nTime").value;
   const act = document.getElementById("nAct").value.trim();
   if (!time || !act) { setStatus(st, "Zeitpunkt und Activity sind erforderlich", "err"); return; }
-  const body = { activity_time_utc: zurichInputToUtc(time), activity: act, activity_comment: document.getElementById("nCom").value };
-  for (const [id, k] of [["nOdo", "odometer_km"], ["nSoc", "soc_percentage"], ["nRng", "range_km"]]) {
+  const body = { activity_time_utc: zurichInputToUtc(time), activity: act, note: document.getElementById("nCom").value };
+  for (const [id, k] of [["nOdo", "odometer_km"], ["nSoc", "soc_percent"], ["nRng", "range_km"]]) {
     const v = document.getElementById(id).value; if (v !== "") body[k] = v;
   }
   setStatus(st, "Speichere…", "pending");

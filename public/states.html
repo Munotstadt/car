@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Munotstadt Car · Zustände</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="header"></div>
+<div class="wrap wide">
+  <h1>Zustände</h1>
+  <div class="sub" id="subline">Lade Zeitreihe…</div>
+
+  <div class="toolbar">
+    <div class="row">
+      <div class="field"><label for="fFrom">Von (Zürich)</label><input id="fFrom" type="date"></div>
+      <div class="field"><label for="fTo">Bis inkl. (Zürich)</label><input id="fTo" type="date"></div>
+      <div class="field"><label for="fKind">Art</label><select id="fKind"><option value="">Alle</option></select></div>
+      <button onclick="reload()">Filtern</button>
+      <button class="ghost" onclick="resetFilter()">Zurücksetzen</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Zeit (Zürich)</th><th>Art</th><th class="num">Ref-ID</th>
+        <th class="num">Odometer</th><th class="num">SoC %</th><th class="num">Range km</th>
+        <th>Adresse / Ort</th><th>Label</th><th>Source</th><th>Hinweis</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="toolbar"><button class="ghost" id="moreBtn" onclick="more()" style="display:none">Weitere laden</button><span class="hint-txt" id="countTxt"></span></div>
+  <div class="hint-txt">Nur Anzeige. Gemeinsame Zeitreihe aus Collector, Trip-Start/-Ende, Lade-Start/-Ende und Activities (D1-View <code>car_state_v</code>), neueste zuerst. Lade-Ende = Start + Dauer. Hinweis «Odometer ↓» markiert Zeilen, deren Odometer höher ist als bei der nächstälteren Zeile mit Odometer.</div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+renderHeader("/states");
+const PAGE = 200;
+const KIND = { collector: "Collector", trip_start: "Trip Start", trip_end: "Trip Ende", charge_start: "Laden Start", charge_end: "Laden Ende", activity: "Activity" };
+let rows = [], total = 0, kindsLoaded = false;
+
+function query(offset) {
+  const q = new URLSearchParams({ limit: PAGE, offset });
+  const from = document.getElementById("fFrom").value, to = document.getElementById("fTo").value;
+  if (from) q.set("from", zurichInputToUtc(from + "T00:00"));
+  if (to) { const d = new Date(Date.parse(to + "T12:00:00Z") + 86400000).toISOString().slice(0, 10); q.set("to", zurichInputToUtc(d + "T00:00")); }
+  if (document.getElementById("fKind").value) q.set("kind", document.getElementById("fKind").value);
+  return q.toString();
+}
+
+function rowHtml(r, warn) {
+  return `<tr${warn ? ' class="editing"' : ""}>
+    <td class="nowrap">${fmtZurich(r.state_time_utc)}</td><td>${esc(KIND[r.kind] || r.kind)}</td><td class="num">${r.ref_id}</td>
+    <td class="num">${fmt(r.odometer_km)}</td><td class="num">${fmt(r.soc_percent)}</td><td class="num">${fmt(r.range_km)}</td>
+    <td class="addr" title="${esc(r.address)}">${esc(r.address) || "–"}</td><td>${esc(r.label) || "–"}</td><td class="addr" title="${esc(r.source)}">${esc(r.source) || "–"}</td>
+    <td>${warn ? "Odometer ↓" : ""}</td>
+  </tr>`;
+}
+
+function render() {
+  // Liste ist neueste zuerst: eine Zeile ist auffällig, wenn die nächstältere Zeile mit Odometer einen kleineren Wert hat
+  const warn = new Array(rows.length).fill(false);
+  // Vergleich: Zeile i (neuer) gegen nächste ältere Zeile j>i mit Odometer
+  for (let i = 0; i < rows.length; i++) {
+    const o = rows[i].odometer_km; if (o === null || o === undefined) continue;
+    let j = i + 1; while (j < rows.length && (rows[j].odometer_km === null || rows[j].odometer_km === undefined)) j++;
+    if (j < rows.length && rows[j].odometer_km > o + 0.5) warn[i] = true;
+  }
+  const n = warn.filter(Boolean).length;
+  document.getElementById("tbody").innerHTML = rows.length ? rows.map((r, i) => rowHtml(r, warn[i])).join("") : `<tr><td colspan="10" class="empty">Keine Einträge</td></tr>`;
+  document.getElementById("subline").textContent = `${fmt(total)} Zustände${n ? ` · ${n} mit Odometer-Rücksprung (in den geladenen Zeilen)` : ""}`;
+  document.getElementById("countTxt").textContent = `${fmt(rows.length)} von ${fmt(total)} angezeigt`;
+  document.getElementById("moreBtn").style.display = rows.length < total ? "" : "none";
+}
+
+async function reload() {
+  try {
+    const d = await api("/api/states?" + query(0));
+    rows = d.rows; total = d.total;
+    if (!kindsLoaded) {
+      document.getElementById("fKind").innerHTML = `<option value="">Alle</option>` + d.kinds.map((k) => `<option value="${esc(k.kind)}">${esc(KIND[k.kind] || k.kind)} (${fmt(k.n)})</option>`).join("");
+      kindsLoaded = true;
+    }
+    render();
+  } catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+}
+async function more() {
+  try { const d = await api("/api/states?" + query(rows.length)); rows = rows.concat(d.rows); total = d.total; render(); }
+  catch (e) { document.getElementById("subline").textContent = "Fehler: " + e.message; }
+}
+function resetFilter() { ["fFrom", "fTo", "fKind"].forEach((id) => (document.getElementById(id).value = "")); reload(); }
+reload();
+</script>
+</body>
+</html>
