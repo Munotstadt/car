@@ -225,6 +225,20 @@ async function handleApi(request, env, url) {
       return json({ today, year, prevYear, ytd: cur, pytd: prev, monthly });
     }
 
+    // ---- Statistics: Range vs. SoC (Reifen aus skoda_activites_tbl 'Reifenwechsel') ----
+    if (path === "/api/range-soc" && method === "GET") {
+      const { results } = await db.prepare(
+        `SELECT collected_at_utc AS t, soc_percent AS soc, range_km AS rng,
+           (SELECT activity_comment FROM skoda_activites_tbl a
+             WHERE a.activity = 'Reifenwechsel' AND a.activity_time_utc <= c.collected_at_utc
+             ORDER BY a.activity_time_utc DESC LIMIT 1) AS tires
+         FROM skoda_collector_tbl c
+         WHERE soc_percent IS NOT NULL AND range_km IS NOT NULL AND soc_percent > 0 AND range_km > 0
+         ORDER BY collected_at_utc`).all();
+      const points = (results || []).map((r) => ({ t: r.t, soc: r.soc, range: r.rng, tires: r.tires === "Sommer" || r.tires === "Winter" ? r.tires : null }));
+      return json({ points });
+    }
+
     // ---- Activities ----
     if (path === "/api/activities" && method === "GET") {
       const { results } = await db.prepare("SELECT * FROM skoda_activites_tbl ORDER BY activity_time_utc DESC, id DESC").all();

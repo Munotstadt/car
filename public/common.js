@@ -203,3 +203,60 @@ function dualLineChart(el, rows, oa, ob) {
   });
   svg.addEventListener("mouseleave", () => { vl.style.display = "none"; tt.style.display = "none"; });
 }
+
+/**
+ * Streudiagramm mit optionaler Regressionsgeraden (y = a + b*x, kleinste Quadrate).
+ * groups: [{color, label, pts:[{x, y, tip}]}]; o: {xLabel, yLabel, xMin, xMax, yMin, yMax, regression:bool}
+ * Gibt {n, a, b, r2} der Regression zurueck (oder null).
+ */
+function scatterChart(el, groups, o = {}) {
+  const all = groups.flatMap((g) => g.pts.map((p) => ({ ...p, color: g.color })));
+  if (all.length < 2) { el.innerHTML = '<div class="empty">Zu wenig Daten für die gewählte Auswahl</div>'; return null; }
+  const W = 640, H = 300, pl = 46, pr = 14, pt = 10, pb = 36;
+  const xs = all.map((p) => p.x);
+  const xmin = o.xMin ?? 0, xmax = o.xMax ?? Math.ceil(Math.max(...xs) / 50) * 50;
+  const ymin = o.yMin ?? 0, ymax = o.yMax ?? 100;
+  const x = (v) => pl + ((v - xmin) / (xmax - xmin || 1)) * (W - pl - pr);
+  const y = (v) => pt + (1 - (v - ymin) / (ymax - ymin || 1)) * (H - pt - pb);
+
+  const gy = niceTicks(ymin, ymax, 5).map((v) =>
+    `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>` +
+    `<text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="#8a8a8a">${fmt(v, 0)}</text>`).join("");
+  const gx = niceTicks(xmin, xmax, 5).map((v) =>
+    `<line x1="${x(v)}" x2="${x(v)}" y1="${pt}" y2="${H - pb}" stroke="var(--grid)"/>` +
+    `<text x="${x(v)}" y="${H - pb + 14}" text-anchor="middle" font-size="10" fill="#8a8a8a">${fmt(v, 0)}</text>`).join("");
+  const labels = `<text x="${(pl + W - pr) / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#666">${o.xLabel || ""}</text>` +
+    `<text x="11" y="${(pt + H - pb) / 2}" text-anchor="middle" font-size="10" fill="#666" transform="rotate(-90 11 ${(pt + H - pb) / 2})">${o.yLabel || ""}</text>`;
+  const dots = all.map((p) => `<circle cx="${x(p.x).toFixed(1)}" cy="${y(p.y).toFixed(1)}" r="3.2" fill="${p.color}" fill-opacity=".55" stroke="${p.color}" stroke-width=".6"/>`).join("");
+
+  let reg = null, line = "";
+  if (o.regression !== false && all.length >= 3) {
+    const n = all.length, mx = xs.reduce((s, v) => s + v, 0) / n, my = all.reduce((s, p) => s + p.y, 0) / n;
+    let sxx = 0, sxy = 0, syy = 0;
+    for (const p of all) { sxx += (p.x - mx) ** 2; sxy += (p.x - mx) * (p.y - my); syy += (p.y - my) ** 2; }
+    if (sxx > 0) {
+      const b = sxy / sxx, a = my - b * mx;
+      reg = { n, a, b, r2: syy > 0 ? (sxy * sxy) / (sxx * syy) : null };
+      // Gerade auf den sichtbaren Bereich (y in [ymin,ymax]) zuschneiden
+      let xa = Math.max(xmin, Math.min(...xs)), xb = Math.min(xmax, Math.max(...xs));
+      line = `<line x1="${x(xa)}" y1="${y(a + b * xa)}" x2="${x(xb)}" y2="${y(a + b * xb)}" stroke="#E30613" stroke-width="2" stroke-dasharray="6 4"/>`;
+    }
+  }
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${gy}${gx}${labels}${dots}${line}
+      <circle class="hv" r="5" fill="none" stroke="#1a1a1a" stroke-width="1.5" style="display:none"/></svg><div class="tt"></div>`;
+  const svg = el.querySelector("svg"), tt = el.querySelector(".tt"), hv = el.querySelector(".hv");
+  svg.addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W, py = ((e.clientY - r.top) / r.height) * H;
+    let best = null, bd = Infinity;
+    for (const p of all) { const d = (x(p.x) - px) ** 2 + (y(p.y) - py) ** 2; if (d < bd) { bd = d; best = p; } }
+    if (!best || bd > 30 * 30) { hv.style.display = "none"; tt.style.display = "none"; return; }
+    hv.setAttribute("cx", x(best.x)); hv.setAttribute("cy", y(best.y)); hv.style.display = "";
+    tt.style.display = "block";
+    tt.style.left = (x(best.x) / W) * r.width + "px";
+    tt.style.top = (y(best.y) / H) * r.height + "px";
+    tt.textContent = best.tip || `${fmt(best.x)} km · ${fmt(best.y)} %`;
+  });
+  svg.addEventListener("mouseleave", () => { hv.style.display = "none"; tt.style.display = "none"; });
+  return reg;
+}

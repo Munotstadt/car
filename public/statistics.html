@@ -32,7 +32,30 @@
       <tbody id="tbody"></tbody>
     </table>
   </div>
+
   <div class="hint-txt">Basis: Kilometerstand aus <code>skoda_collector_tbl</code> (UTC-Monate). km Monat = höchster Stand des Monats minus höchster Stand der Vorperiode; YtD/PYtD jeweils bis zum heutigen Tag des Jahres. * = erster Monat mit Daten, nur ab erstem Messwert gerechnet.</div>
+
+  <h2>Reichweite vs. SoC</h2>
+  <div class="toolbar">
+    <div class="row">
+      <div class="field"><label for="rsTires">Reifen</label><select id="rsTires"><option value="">Alle</option><option>Sommer</option><option>Winter</option></select></div>
+      <div class="field"><label for="rsYear">Jahr</label><select id="rsYear"><option value="">Alle</option></select></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="legend"><span><i style="background:#d98a00"></i>Sommerreifen</span><span><i style="background:#1f6feb"></i>Winterreifen</span><span><i style="background:#999"></i>ohne Zuordnung</span><span><i style="background:#E30613"></i>Regressionsgerade</span></div>
+    <div class="chart" id="rsChart"></div>
+    <div class="hint-txt" id="rsReg"></div>
+  </div>
+
+  <h2>Ø Reichweite bei 80 % SoC</h2>
+  <div class="table-wrap" style="max-width:560px;">
+    <table>
+      <thead><tr><th>Jahr</th><th class="num">Sommerreifen</th><th class="num">Winterreifen</th><th class="num">All</th></tr></thead>
+      <tbody id="rsBody"></tbody>
+    </table>
+  </div>
+  <div class="hint-txt">Basis: Messpunkte aus <code>skoda_collector_tbl</code> mit gleichzeitig vorhandenem SoC und Reichweite. Reifen gemäss Reifenwechsel in <code>skoda_activites_tbl</code>. Tabelle: Mittelwert der Reichweite aller Messpunkte mit SoC = 80 % (auf ganze % gerundet); in Klammern die Anzahl Messpunkte. Die Tabelle ist unabhängig von den Filtern oben.</div>
 </div>
 
 <script src="/common.js"></script>
@@ -92,6 +115,45 @@ async function load() {
 }
 document.getElementById("yearSel").addEventListener("change", renderTable);
 load();
+
+// ---------- Reichweite vs. SoC ----------
+let rsPoints = [];
+const TIRE_COLOR = { Sommer: "#d98a00", Winter: "#1f6feb", none: "#999" };
+function rsRender() {
+  const tf = document.getElementById("rsTires").value, yf = document.getElementById("rsYear").value;
+  const sel = rsPoints.filter((p) => (!tf || p.tires === tf) && (!yf || p.t.startsWith(yf)));
+  const groups = ["Sommer", "Winter", "none"].map((k) => ({
+    color: TIRE_COLOR[k],
+    pts: sel.filter((p) => (p.tires || "none") === k).map((p) => ({ x: p.range, y: p.soc, tip: `${fmtZurich(p.t)} · ${fmt(p.range)} km · ${fmt(p.soc)} %${p.tires ? " · " + p.tires : ""}` })),
+  }));
+  const reg = scatterChart(document.getElementById("rsChart"), groups, { xLabel: "Reichweite (km)", yLabel: "SoC (%)", yMin: 0, yMax: 100 });
+  document.getElementById("rsReg").textContent = reg
+    ? `n = ${fmt(reg.n)} · SoC = ${fmt(reg.a, 2)} + ${fmt(reg.b, 4)} × Range · R² = ${reg.r2 === null ? "–" : fmt(reg.r2, 3)}`
+    : `n = ${fmt(sel.length)}`;
+}
+function rsTable() {
+  const at80 = rsPoints.filter((p) => Math.round(p.soc) === 80);
+  const cell = (list) => list.length ? `${fmt(list.reduce((s, p) => s + p.range, 0) / list.length)} km <small class="hint-txt">(${list.length})</small>` : "–";
+  const years = [...new Set(rsPoints.map((p) => p.t.slice(0, 4)))].sort().reverse();
+  const row = (label, f, cls = "") => {
+    const l = at80.filter(f);
+    return `<tr${cls}><td>${label}</td><td class="num">${cell(l.filter((p) => p.tires === "Sommer"))}</td><td class="num">${cell(l.filter((p) => p.tires === "Winter"))}</td><td class="num">${cell(l)}</td></tr>`;
+  };
+  document.getElementById("rsBody").innerHTML =
+    years.map((y) => row(y, (p) => p.t.startsWith(y))).join("") + row("Alle Jahre", () => true, ' class="total"');
+}
+async function rsLoad() {
+  try {
+    ({ points: rsPoints } = await api("/api/range-soc"));
+    const years = [...new Set(rsPoints.map((p) => p.t.slice(0, 4)))].sort().reverse();
+    document.getElementById("rsYear").innerHTML = `<option value="">Alle</option>` + years.map((y) => `<option>${y}</option>`).join("");
+    rsRender(); rsTable();
+  } catch (e) { document.getElementById("rsChart").innerHTML = `<div class="empty">Fehler: ${esc(e.message)}</div>`; }
+}
+document.getElementById("rsTires").addEventListener("change", rsRender);
+document.getElementById("rsYear").addEventListener("change", rsRender);
+rsLoad();
+
 </script>
 </body>
 </html>
