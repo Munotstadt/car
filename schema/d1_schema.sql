@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_t
 -- Ladevorgänge (Seite /charging). Der Worker legt die Tabelle bei Bedarf selbst an.
 CREATE TABLE IF NOT EXISTS car_charging_tbl (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  charging_date_utc TEXT NOT NULL,      -- 'YYYY-MM-DD HH:MM:SS' UTC
+  charging_end_date_utc TEXT NOT NULL,  -- Ladeende, 'YYYY-MM-DD HH:MM:SS' UTC (Start = Ende - Dauer)
   activity TEXT NOT NULL,               -- 'External' (Default) | 'Home'
   odometer_km REAL, start_soc_percent REAL, end_soc_percent REAL, start_range_km REAL, end_range_km REAL,
   kwh_charged REAL, costs_chf REAL,
@@ -36,10 +36,10 @@ CREATE TABLE IF NOT EXISTS car_charging_tbl (
   created_at_utc TEXT NOT NULL DEFAULT (datetime('now')),
   modified_at_utc TEXT                  -- bei Anlage = created_at_utc, bei jeder Änderung neu gesetzt
 );
-CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_date_utc);
+CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_end_date_utc);
 
 -- Einheitliche Zeitreihe aller Fahrzeugzustände (nur Lesezugriff, keine Kopie der Daten).
 -- Der Worker legt die View beim ersten Request an bzw. erneuert sie bei Änderung der Definition (siehe STATE_VIEW_SQL in src/index.js).
 -- Spalten: state_time_utc, kind (collector | trip_start | trip_end | charge_start | charge_end | activity), ref_id, odometer_km,
---          soc_percent, range_km, address, source, label. Zeilen ohne Odometer, SoC und Range entfallen. Lade-Ende = Start + Dauer.
+--          soc_percent, range_km, address, source, label. Zeilen ohne Odometer, SoC und Range entfallen. Lade-Ende = charging_end_date_utc, Lade-Start = Ende minus Dauer; Collector-Zeit = status_captured_at_utc (Fallback collected_at_utc).
 -- CREATE VIEW car_state_v AS ...

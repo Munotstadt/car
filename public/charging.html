@@ -15,7 +15,7 @@
   <h2 id="formTitle">Neuer Ladevorgang</h2>
   <div class="card">
     <div class="row">
-      <div class="field"><label for="fTime">Zeitpunkt (Zürich)</label><input id="fTime" type="datetime-local"></div>
+      <div class="field"><label for="fTime">Ladeende (Zürich)</label><input id="fTime" type="datetime-local"></div>
       <div class="field narrow"><label for="fAct">Activity</label><select id="fAct"><option>External</option><option>Home</option></select></div>
       <div class="field narrow"><label for="fOdo">Odometer (km)</label><input id="fOdo" type="number" step="1" placeholder="auto"></div>
       <div class="field narrow"><label for="fType">Ladetyp</label><select id="fType"><option value="">–</option><option>AC</option><option>DC</option></select></div>
@@ -41,7 +41,7 @@
       <button class="ghost" onclick="resetForm()" id="cancelBtn" style="display:none">Abbrechen</button>
     </div>
     <div id="formStatus" class="status-msg"></div>
-    <div class="hint-txt">Leere Felder Odometer / SoC Start / Range Start werden beim Neuanlegen mit dem letzten Collector-Stand zum gewählten Zeitpunkt befüllt. Die Dauer im Format hh:mm.</div>
+    <div class="hint-txt">Leere Felder Odometer / SoC Start / Range Start werden beim Neuanlegen mit dem letzten Collector-Stand zum Ladestart (Ladeende minus Dauer; ohne Dauer: Ladeende) befüllt. Die Dauer im Format hh:mm.</div>
     <datalist id="cardList"></datalist>
     <datalist id="locList"></datalist>
     <datalist id="stationList"></datalist>
@@ -58,7 +58,7 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>Zeitpunkt (Zürich)</th><th>Activity</th><th class="num">Odometer</th>
+        <th>Ladeende (Zürich)</th><th>Activity</th><th class="num">Odometer</th>
         <th>SoC S → E</th><th>Range S → E</th>
         <th class="num">kWh</th><th class="num">CHF</th><th class="num">CHF/kWh</th><th>Typ</th><th>Dauer</th><th class="num">°C</th>
         <th>Ort</th><th>Station</th><th>Karte</th><th>Notiz</th><th>Source</th>
@@ -83,14 +83,14 @@ const MAP = [["fAct", "activity"], ["fOdo", "odometer_km"], ["fSocS", "start_soc
   ["fKwh", "kwh_charged"], ["fChf", "costs_chf"], ["fType", "charging_type"], ["fDur", "duration_hh:mm"], ["fTemp", "temperature_c"], ["fLoc", "location"], ["fStation", "station_name"],
   ["fCard", "charging_card"], ["fNotes", "note"]];
 const showPh = () => $("showPh").checked;
-const byTime = (a, b) => (a.charging_date_utc < b.charging_date_utc ? 1 : a.charging_date_utc > b.charging_date_utc ? -1 : b.id - a.id);
+const byTime = (a, b) => (a.charging_end_date_utc < b.charging_end_date_utc ? 1 : a.charging_end_date_utc > b.charging_end_date_utc ? -1 : b.id - a.id);
 
 function rowHtml(r) {
   const ph = showPh();
   const perKwh = r.kwh_charged > 0 && r.costs_chf !== null ? r.costs_chf / r.kwh_charged : null;
   const td = (v) => `<td class="addr" title="${esc(v)}">${esc(v) || "–"}</td>`;
   return `<tr>
-    <td class="nowrap">${fmtZurich(r.charging_date_utc)}</td><td>${esc(r.activity)}</td><td class="num">${fmt(r.odometer_km)}</td>
+    <td class="nowrap">${fmtZurich(r.charging_end_date_utc)}</td><td>${esc(r.activity)}</td><td class="num">${fmt(r.odometer_km)}</td>
     <td class="num">${fmt(r.start_soc_percent)} → ${fmt(r.end_soc_percent)}</td><td class="num">${fmt(r.start_range_km)} → ${fmt(r.end_range_km)}</td>
     <td class="num">${fmt(r.kwh_charged, 2)}</td><td class="num">${fmt(r.costs_chf, 2)}</td><td class="num">${fmt(perKwh, 3)}</td>
     <td>${esc(r.charging_type) || "–"}</td><td class="nowrap">${esc(r["duration_hh:mm"]) || "–"}</td><td class="num">${fmt(r.temperature_c, 1)}</td>
@@ -105,13 +105,13 @@ function visible() {
   if (q) {
     const terms = q.split(/\s+/);
     return rows.filter((r) => {
-      const hay = [fmtZurich(r.charging_date_utc), r.charging_date_utc, r.activity, r.odometer_km, r.start_soc_percent, r.end_soc_percent, r.start_range_km, r.end_range_km, r.kwh_charged, r.costs_chf,
+      const hay = [fmtZurich(r.charging_end_date_utc), r.charging_end_date_utc, r.activity, r.odometer_km, r.start_soc_percent, r.end_soc_percent, r.start_range_km, r.end_range_km, r.kwh_charged, r.costs_chf,
         r["duration_hh:mm"], r.temperature_c, r.note, r.location, r.station_name, r.charging_card, r.charging_type, r.source, r.placeholder2].map((v) => (v ?? "")).join(" ").toLowerCase();
       return terms.every((t) => hay.includes(t));
     });
   }
   const y = $("yearSel").value;
-  return rows.filter((r) => y === "all" || r.charging_date_utc.startsWith(y));
+  return rows.filter((r) => y === "all" || r.charging_end_date_utc.startsWith(y));
 }
 function render() {
   document.querySelectorAll("th.ph").forEach((th) => (th.style.display = showPh() ? "" : "none"));
@@ -134,7 +134,7 @@ function resetForm() {
 function edit(id) {
   const r = rows.find((x) => x.id === id); if (!r) return;
   editId = id;
-  $("fTime").value = utcToZurichInput(r.charging_date_utc);
+  $("fTime").value = utcToZurichInput(r.charging_end_date_utc);
   MAP.forEach(([fid, col]) => { $(fid).value = r[col] ?? ""; });
   $("formTitle").textContent = "Ladevorgang anpassen"; $("saveBtn").textContent = "Speichern"; $("cancelBtn").style.display = "";
   setStatus(formSt, "");
@@ -142,8 +142,8 @@ function edit(id) {
 }
 
 async function submitForm() {
-  if (!$("fTime").value) { setStatus(formSt, "Zeitpunkt ist erforderlich", "err"); return; }
-  const body = { charging_date_utc: zurichInputToUtc($("fTime").value) };
+  if (!$("fTime").value) { setStatus(formSt, "Ladeende ist erforderlich", "err"); return; }
+  const body = { charging_end_date_utc: zurichInputToUtc($("fTime").value) };
   MAP.forEach(([fid, col]) => {
     const v = $(fid).value;
     if (editId !== null || v !== "") body[col] = v; // beim Anlegen leere Felder weglassen (Collector-Vorbelegung)
@@ -165,7 +165,7 @@ async function submitForm() {
 
 async function del(id) {
   const r = rows.find((x) => x.id === id);
-  if (!confirm(`Ladevorgang vom ${fmtZurich(r.charging_date_utc)} (${r.activity}) endgültig löschen?`)) return;
+  if (!confirm(`Ladevorgang vom ${fmtZurich(r.charging_end_date_utc)} (${r.activity}) endgültig löschen?`)) return;
   try {
     await api(`/api/charging/${id}`, { method: "DELETE", body: {} });
     rows = rows.filter((x) => x.id !== id);
@@ -176,7 +176,7 @@ async function del(id) {
 
 function fillYears() {
   const sel = $("yearSel"), cur = sel.value;
-  const years = [...new Set([String(new Date().getFullYear()), ...rows.map((r) => r.charging_date_utc.slice(0, 4))])].sort().reverse();
+  const years = [...new Set([String(new Date().getFullYear()), ...rows.map((r) => r.charging_end_date_utc.slice(0, 4))])].sort().reverse();
   sel.innerHTML = `<option value="all">Alle</option>` + years.map((y) => `<option>${y}</option>`).join("");
   sel.value = cur && [...sel.options].some((o) => o.value === cur) ? cur : years[0];
 }

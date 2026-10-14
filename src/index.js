@@ -29,7 +29,7 @@ function html(body, status = 200) {
 
 const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      charging_date_utc TEXT NOT NULL, activity TEXT NOT NULL,
+      charging_end_date_utc TEXT NOT NULL, activity TEXT NOT NULL,
       odometer_km REAL, start_soc_percent REAL, end_soc_percent REAL, start_range_km REAL, end_range_km REAL,
       kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature_c REAL,
       note TEXT, location TEXT, station_name TEXT, charging_card TEXT,
@@ -37,6 +37,7 @@ const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
       created_at_utc TEXT NOT NULL DEFAULT (datetime('now')), modified_at_utc TEXT)`;
 
 // Einheitliche Zeitreihe aller Fahrzeugzustände (Collector, Trip-Start/-Ende, Lade-Start/-Ende, Activities).
+// Zeit: Collector = status_captured_at_utc (Fallback collected_at_utc, wo leer); Lade-Ende = charging_end_date_utc; Lade-Start = Ende - Dauer.
 // Nur Lesezugriff; keine Daten werden kopiert. Zeilen ohne Odometer, SoC und Range werden ausgelassen.
 const CHG_DUR_MIN = `(CAST(substr("duration_hh:mm", 1, instr("duration_hh:mm", ':') - 1) AS INTEGER) * 60
         + CAST(substr("duration_hh:mm", instr("duration_hh:mm", ':') + 1) AS INTEGER))`;
@@ -44,7 +45,7 @@ const CHG_DUR_MIN = `(CAST(substr("duration_hh:mm", 1, instr("duration_hh:mm", '
 const STATE_VIEW_SQL = `CREATE VIEW car_state_v AS
 SELECT * FROM (
   SELECT * FROM (
-    SELECT collected_at_utc AS state_time_utc, 'collector' AS kind, id AS ref_id,
+    SELECT COALESCE(status_captured_at_utc, collected_at_utc) AS state_time_utc, 'collector' AS kind, id AS ref_id,
            odometer_km, soc_percent, range_km, address, source, NULL AS label
       FROM skoda_collector_tbl
     UNION ALL
@@ -56,12 +57,12 @@ SELECT * FROM (
   )
   UNION ALL
   SELECT * FROM (
-    SELECT charging_date_utc AS state_time_utc, 'charge_start' AS kind, id AS ref_id,
+    SELECT CASE WHEN "duration_hh:mm" IS NOT NULL THEN datetime(charging_end_date_utc, '-' || ${CHG_DUR_MIN} || ' minutes') ELSE charging_end_date_utc END AS state_time_utc,
+           'charge_start' AS kind, id AS ref_id,
            odometer_km, start_soc_percent AS soc_percent, start_range_km AS range_km, location AS address, source, activity AS label
       FROM car_charging_tbl
     UNION ALL
-    SELECT CASE WHEN "duration_hh:mm" IS NOT NULL THEN datetime(charging_date_utc, '+' || ${CHG_DUR_MIN} || ' minutes') ELSE charging_date_utc END,
-           'charge_end', id, odometer_km, end_soc_percent, end_range_km, location, source, activity
+    SELECT charging_end_date_utc, 'charge_end', id, odometer_km, end_soc_percent, end_range_km, location, source, activity
       FROM car_charging_tbl WHERE end_soc_percent IS NOT NULL OR end_range_km IS NOT NULL
     UNION ALL
     SELECT activity_time_utc, 'activity', id, odometer_km, soc_percent, range_km, NULL, NULL, activity
@@ -86,7 +87,6 @@ async function ensureSchema(db) {
       at_date_utc TEXT NOT NULL)`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_activities_time ON skoda_activites_tbl(activity_time_utc)"),
     db.prepare(CHARGING_DDL),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_date_utc)"),
   ]);
   const col = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('skoda_trips_tbl') WHERE name = 'note'").first();
   if (!col) await db.prepare("ALTER TABLE skoda_trips_tbl ADD COLUMN note TEXT").run();
@@ -96,6 +96,12 @@ async function ensureSchema(db) {
   if (ph1) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder1 TO charging_type").run();
   const ph3 = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'placeholder3'").first();
   if (ph3) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder3 TO source").run();
+  // charging_date_utc -> charging_end_date_utc (der erfasste Zeitpunkt ist das Ladeende; View vorher entfernen)
+  if (await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'charging_date_utc'").first()) {
+    await db.prepare("DROP VIEW IF EXISTS car_state_v").run();
+    await renameColumn(db, "car_charging_tbl", "charging_date_utc", "charging_end_date_utc");
+  }
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_charging_date ON car_charging_tbl(charging_end_date_utc)").run();
   // Spalten harmonisieren (Namen wie Collector/Trips: *_soc_percent, *_range_km, temperature_c, note)
   for (const [from, to] of [["soc_start", "start_soc_percent"], ["soc_end", "end_soc_percent"], ["range_start", "start_range_km"],
     ["range_end", "end_range_km"], ["temperature", "temperature_c"], ["notes", "note"]]) await renameColumn(db, "car_charging_tbl", from, to);
@@ -290,10 +296,10 @@ async function handleApi(request, env, url) {
     // ---- Statistics: Batteriekapazität aus Ladevorgängen (kWh / ΔSoC) ----
     if (path === "/api/battery" && method === "GET") {
       const { results } = await db.prepare(
-        `SELECT id, charging_date_utc AS t, activity, charging_type, kwh_charged AS kwh, start_soc_percent, end_soc_percent
+        `SELECT id, charging_end_date_utc AS t, activity, charging_type, kwh_charged AS kwh, start_soc_percent, end_soc_percent
          FROM car_charging_tbl
          WHERE kwh_charged > 10 AND start_soc_percent IS NOT NULL AND end_soc_percent IS NOT NULL AND (end_soc_percent - start_soc_percent) > 10
-         ORDER BY charging_date_utc`).all();
+         ORDER BY charging_end_date_utc`).all();
       const charges = (results || []).map((r) => ({ ...r, capacity: (r.kwh / (r.end_soc_percent - r.start_soc_percent)) * 100 }));
       return json({ charges });
     }
@@ -392,23 +398,30 @@ async function handleApi(request, env, url) {
 
     // ---- Charging ----
     if (path === "/api/charging" && method === "GET") {
-      const { results } = await db.prepare("SELECT * FROM car_charging_tbl ORDER BY charging_date_utc DESC, id DESC").all();
+      const { results } = await db.prepare("SELECT * FROM car_charging_tbl ORDER BY charging_end_date_utc DESC, id DESC").all();
       return json({ charging: results || [] });
     }
     if (path === "/api/charging" && method === "POST") {
       const body = await request.json();
-      const time = String(body.charging_date_utc || "");
-      if (!UTC_RE.test(time)) return json({ error: "charging_date_utc im Format YYYY-MM-DD HH:MM:SS erforderlich" }, 400);
+      const time = String(body.charging_end_date_utc || "");
+      if (!UTC_RE.test(time)) return json({ error: "charging_end_date_utc im Format YYYY-MM-DD HH:MM:SS erforderlich" }, 400);
       const f = pick(body, CHG_FIELDS);
       if (!f.activity) return json({ error: "activity (Home/External) erforderlich" }, 400);
-      // Leere Startwerte mit dem letzten Collector-Stand (<= Zeitpunkt) vorbelegen
+      // Leere Startwerte mit dem letzten Collector-Stand zum Ladestart (= Ladeende - Dauer, ohne Dauer: Ladeende) vorbelegen
+      let startTime = time;
+      const dur = f["duration_hh:mm"];
+      if (dur) {
+        const [h, mi] = dur.split(":").map(Number);
+        const d = new Date(Date.parse(time.replace(" ", "T") + "Z") - (h * 60 + mi) * 60000);
+        startTime = d.toISOString().slice(0, 19).replace("T", " ");
+      }
       const snap = await db.prepare(
         `SELECT odometer_km, soc_percent, range_km FROM skoda_collector_tbl
-         WHERE collected_at_utc <= ? ORDER BY collected_at_utc DESC LIMIT 1`).bind(time).first();
+         WHERE collected_at_utc <= ? ORDER BY collected_at_utc DESC LIMIT 1`).bind(startTime).first();
       if (!("odometer_km" in f)) f.odometer_km = snap?.odometer_km ?? null;
       if (!("start_soc_percent" in f)) f.start_soc_percent = snap?.soc_percent ?? null;
       if (!("start_range_km" in f)) f.start_range_km = snap?.range_km ?? null;
-      const cols = ["charging_date_utc", ...Object.keys(f)];
+      const cols = ["charging_end_date_utc", ...Object.keys(f)];
       const res = await db.prepare(`INSERT INTO car_charging_tbl (${cols.map((c) => `"${c}"`).join(", ")}, created_at_utc, modified_at_utc)
         VALUES (${cols.map(() => "?").join(", ")}, datetime('now'), datetime('now'))`).bind(time, ...Object.values(f)).run();
       const row = await db.prepare("SELECT * FROM car_charging_tbl WHERE id = ?").bind(res.meta.last_row_id).first();
@@ -419,10 +432,10 @@ async function handleApi(request, env, url) {
       const id = Number(m[1]);
       const body = await request.json();
       const fields = pick(body, CHG_FIELDS);
-      if ("charging_date_utc" in body) {
-        const t = String(body.charging_date_utc);
-        if (!UTC_RE.test(t)) return json({ error: "charging_date_utc ungültig" }, 400);
-        fields.charging_date_utc = t;
+      if ("charging_end_date_utc" in body) {
+        const t = String(body.charging_end_date_utc);
+        if (!UTC_RE.test(t)) return json({ error: "charging_end_date_utc ungültig" }, 400);
+        fields.charging_end_date_utc = t;
       }
       const keys = Object.keys(fields);
       if (!keys.length) return json({ error: "Keine änderbaren Felder übergeben" }, 400);
