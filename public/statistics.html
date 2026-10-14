@@ -56,6 +56,29 @@
     </table>
   </div>
   <div class="hint-txt">Basis: Messpunkte aus <code>skoda_collector_tbl</code> mit gleichzeitig vorhandenem SoC und Reichweite. Reifen gemäss Reifenwechsel in <code>skoda_activites_tbl</code>. Tabelle: Mittelwert der Reichweite aller Messpunkte mit SoC = 80 % (auf ganze % gerundet); in Klammern die Anzahl Messpunkte. Die Tabelle ist unabhängig von den Filtern oben.</div>
+
+  <h2>Battery</h2>
+  <div class="toolbar">
+    <div class="row">
+      <div class="field"><label for="bType">Ladetyp</label><select id="bType"><option value="">Alle</option><option>AC</option><option>DC</option></select></div>
+      <div class="field"><label for="bAct">Activity</label><select id="bAct"><option value="">Alle</option><option>Home</option><option>External</option></select></div>
+      <div class="field"><label for="bYear">Jahr</label><select id="bYear"><option value="">Alle</option></select></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="legend"><span><i style="background:#1f6feb"></i>AC</span><span><i style="background:#d98a00"></i>DC</span><span><i style="background:#999"></i>ohne Ladetyp</span><span><i style="background:#E30613"></i>Regressionsgerade</span></div>
+    <div class="chart" id="bChart"></div>
+    <div class="hint-txt" id="bReg"></div>
+  </div>
+
+  <h2>Ø Kapazität (kWh)</h2>
+  <div class="table-wrap" style="max-width:560px;">
+    <table>
+      <thead><tr><th>Jahr</th><th class="num">Ø AC</th><th class="num">Ø DC</th><th class="num">AC + DC</th></tr></thead>
+      <tbody id="bBody"></tbody>
+    </table>
+  </div>
+  <div class="hint-txt">Kapazität je Ladevorgang = geladene kWh ÷ SoC-Hub (SoC Ende − SoC Start) × 100, aus <code>car_charging_tbl</code>. Berücksichtigt werden nur Ladevorgänge mit mehr als 10 kWh <em>und</em> mehr als 10 % SoC-Hub. Die Werte basieren auf den erfassten kWh (Netzseite, inkl. Ladeverluste) und liegen daher tendenziell über der nutzbaren Batteriekapazität. Tabelle: einfacher Mittelwert der Einzelwerte, in Klammern die Anzahl Ladungen; unabhängig von den Filtern oben. «AC + DC» enthält auch Ladungen ohne Ladetyp.</div>
 </div>
 
 <script src="/common.js"></script>
@@ -153,6 +176,56 @@ async function rsLoad() {
 document.getElementById("rsTires").addEventListener("change", rsRender);
 document.getElementById("rsYear").addEventListener("change", rsRender);
 rsLoad();
+
+// ---------- Battery ----------
+let bCharges = [];
+const BT_COLOR = { AC: "#1f6feb", DC: "#d98a00", none: "#999" };
+const decYear = (utc) => { const d = parseUtc(utc), y = new Date(d).getUTCFullYear(); return y + (d - Date.UTC(y, 0, 1)) / (Date.UTC(y + 1, 0, 1) - Date.UTC(y, 0, 1)); };
+function bRender() {
+  const tf = document.getElementById("bType").value, af = document.getElementById("bAct").value, yf = document.getElementById("bYear").value;
+  const sel = bCharges.filter((c) => (!tf || c.charging_type === tf) && (!af || c.activity === af) && (!yf || c.t.startsWith(yf)));
+  const groups = ["AC", "DC", "none"].map((k) => ({
+    color: BT_COLOR[k],
+    pts: sel.filter((c) => (c.charging_type || "none") === k).map((c) => ({
+      x: decYear(c.t), y: c.capacity,
+      tip: `${fmtZurich(c.t)} · ${fmt(c.capacity, 1)} kWh · ${fmt(c.kwh, 1)} kWh / ${fmt(c.soc_end - c.soc_start)} % · ${c.activity}${c.charging_type ? " · " + c.charging_type : ""}`,
+    })),
+  }));
+  const all = groups.flatMap((g) => g.pts);
+  const el = document.getElementById("bChart");
+  if (all.length < 2) { el.innerHTML = '<div class="empty">Zu wenig Ladevorgänge für die gewählte Auswahl</div>'; document.getElementById("bReg").textContent = `n = ${all.length}`; return; }
+  const ys = all.map((p) => p.y), xs = all.map((p) => p.x);
+  const x0 = Math.floor(Math.min(...xs)), x1 = Math.max(x0 + 1, Math.ceil(Math.max(...xs)));
+  const xTicks = []; for (let v = x0; v <= x1; v++) xTicks.push(v);
+  const reg = scatterChart(el, groups, {
+    xLabel: "Jahr", yLabel: "Kapazität (kWh)", xMin: x0, xMax: x1, xTicks, xFmt: (v) => String(v),
+    yMin: Math.floor(Math.min(...ys) / 5) * 5 - 5, yMax: Math.ceil(Math.max(...ys) / 5) * 5 + 5, yDec: 0,
+  });
+  document.getElementById("bReg").textContent = reg
+    ? `n = ${fmt(reg.n)} · Kapazität = ${fmt(reg.a + reg.b * x0, 1)} kWh (${x0}) ${reg.b < 0 ? "−" : "+"} ${fmt(Math.abs(reg.b), 2)} kWh/Jahr · R² = ${reg.r2 === null ? "–" : fmt(reg.r2, 3)}`
+    : `n = ${fmt(all.length)}`;
+}
+function bTable() {
+  const avg = (l) => l.length ? `${fmt(l.reduce((s, c) => s + c.capacity, 0) / l.length, 1)} <small class="hint-txt">(${l.length})</small>` : "–";
+  const years = [...new Set(bCharges.map((c) => c.t.slice(0, 4)))].sort().reverse();
+  const row = (label, f, cls = "") => {
+    const l = bCharges.filter(f);
+    return `<tr${cls}><td>${label}</td><td class="num">${avg(l.filter((c) => c.charging_type === "AC"))}</td><td class="num">${avg(l.filter((c) => c.charging_type === "DC"))}</td><td class="num">${avg(l)}</td></tr>`;
+  };
+  document.getElementById("bBody").innerHTML = bCharges.length
+    ? years.map((y) => row(y, (c) => c.t.startsWith(y))).join("") + row("Alle Jahre", () => true, ' class="total"')
+    : `<tr><td colspan="4" class="empty">Noch keine auswertbaren Ladevorgänge</td></tr>`;
+}
+async function bLoad() {
+  try {
+    ({ charges: bCharges } = await api("/api/battery"));
+    const years = [...new Set(bCharges.map((c) => c.t.slice(0, 4)))].sort().reverse();
+    document.getElementById("bYear").innerHTML = `<option value="">Alle</option>` + years.map((y) => `<option>${y}</option>`).join("");
+    bRender(); bTable();
+  } catch (e) { document.getElementById("bChart").innerHTML = `<div class="empty">Fehler: ${esc(e.message)}</div>`; }
+}
+["bType", "bAct", "bYear"].forEach((id) => document.getElementById(id).addEventListener("change", bRender));
+bLoad();
 
 </script>
 </body>

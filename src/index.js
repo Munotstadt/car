@@ -239,6 +239,17 @@ async function handleApi(request, env, url) {
       return json({ points });
     }
 
+    // ---- Statistics: Batteriekapazität aus Ladevorgängen (kWh / ΔSoC) ----
+    if (path === "/api/battery" && method === "GET") {
+      const { results } = await db.prepare(
+        `SELECT id, charging_date_utc AS t, activity, charging_type, kwh_charged AS kwh, soc_start, soc_end
+         FROM car_charging_tbl
+         WHERE kwh_charged > 10 AND soc_start IS NOT NULL AND soc_end IS NOT NULL AND (soc_end - soc_start) > 10
+         ORDER BY charging_date_utc`).all();
+      const charges = (results || []).map((r) => ({ ...r, capacity: (r.kwh / (r.soc_end - r.soc_start)) * 100 }));
+      return json({ charges });
+    }
+
     // ---- Activities ----
     if (path === "/api/activities" && method === "GET") {
       const { results } = await db.prepare("SELECT * FROM skoda_activites_tbl ORDER BY activity_time_utc DESC, id DESC").all();

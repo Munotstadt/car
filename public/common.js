@@ -221,10 +221,10 @@ function scatterChart(el, groups, o = {}) {
 
   const gy = niceTicks(ymin, ymax, 5).map((v) =>
     `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>` +
-    `<text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="#8a8a8a">${fmt(v, 0)}</text>`).join("");
-  const gx = niceTicks(xmin, xmax, 5).map((v) =>
+    `<text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="#8a8a8a">${fmt(v, o.yDec ?? 0)}</text>`).join("");
+  const gx = (o.xTicks || niceTicks(xmin, xmax, 5)).map((v) =>
     `<line x1="${x(v)}" x2="${x(v)}" y1="${pt}" y2="${H - pb}" stroke="var(--grid)"/>` +
-    `<text x="${x(v)}" y="${H - pb + 14}" text-anchor="middle" font-size="10" fill="#8a8a8a">${fmt(v, 0)}</text>`).join("");
+    `<text x="${x(v)}" y="${H - pb + 14}" text-anchor="middle" font-size="10" fill="#8a8a8a">${o.xFmt ? o.xFmt(v) : fmt(v, 0)}</text>`).join("");
   const labels = `<text x="${(pl + W - pr) / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#666">${o.xLabel || ""}</text>` +
     `<text x="11" y="${(pt + H - pb) / 2}" text-anchor="middle" font-size="10" fill="#666" transform="rotate(-90 11 ${(pt + H - pb) / 2})">${o.yLabel || ""}</text>`;
   const dots = all.map((p) => `<circle cx="${x(p.x).toFixed(1)}" cy="${y(p.y).toFixed(1)}" r="3.2" fill="${p.color}" fill-opacity=".55" stroke="${p.color}" stroke-width=".6"/>`).join("");
@@ -255,7 +255,7 @@ function scatterChart(el, groups, o = {}) {
     tt.style.display = "block";
     tt.style.left = (x(best.x) / W) * r.width + "px";
     tt.style.top = (y(best.y) / H) * r.height + "px";
-    tt.textContent = best.tip || `${fmt(best.x)} km · ${fmt(best.y)} %`;
+    tt.textContent = best.tip || `${fmt(best.x)} · ${fmt(best.y)}`;
   });
   svg.addEventListener("mouseleave", () => { hv.style.display = "none"; tt.style.display = "none"; });
   return reg;
