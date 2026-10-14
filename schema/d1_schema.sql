@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS car_charging_tbl (
   "duration_hh:mm" TEXT,                -- 'hh:mm'
   temperature REAL, notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
   charging_type TEXT,                   -- 'AC' | 'DC'
-  placeholder2 TEXT, placeholder3 TEXT,
+  placeholder2 TEXT,
+  source TEXT,                          -- z.B. 'GoogleImport'
   created_at_utc TEXT NOT NULL DEFAULT (datetime('now')),
   modified_at_utc TEXT                  -- bei Anlage = created_at_utc, bei jeder Änderung neu gesetzt
 );

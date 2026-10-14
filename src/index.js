@@ -33,7 +33,7 @@ const CHARGING_DDL = `CREATE TABLE IF NOT EXISTS car_charging_tbl (
       odometer_km REAL, soc_start REAL, soc_end REAL, range_start REAL, range_end REAL,
       kwh_charged REAL, costs_chf REAL, "duration_hh:mm" TEXT, temperature REAL,
       notes TEXT, location TEXT, station_name TEXT, charging_card TEXT,
-      charging_type TEXT, placeholder2 TEXT, placeholder3 TEXT,
+      charging_type TEXT, placeholder2 TEXT, source TEXT,
       created_at_utc TEXT NOT NULL DEFAULT (datetime('now')), modified_at_utc TEXT)`;
 
 let schemaReady = false;
@@ -56,6 +56,8 @@ async function ensureSchema(db) {
   if (!mod) await db.prepare("ALTER TABLE car_charging_tbl ADD COLUMN modified_at_utc TEXT").run();
   const ph1 = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'placeholder1'").first();
   if (ph1) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder1 TO charging_type").run();
+  const ph3 = await db.prepare("SELECT 1 AS ok FROM pragma_table_info('car_charging_tbl') WHERE name = 'placeholder3'").first();
+  if (ph3) await db.prepare("ALTER TABLE car_charging_tbl RENAME COLUMN placeholder3 TO source").run();
   schemaReady = true;
 }
 
@@ -121,7 +123,7 @@ const CHG_FIELDS = {
   odometer_km: parseNum, soc_start: parseNum, soc_end: parseNum, range_start: parseNum, range_end: parseNum,
   kwh_charged: parseNum, costs_chf: parseNum, "duration_hh:mm": parseDuration, temperature: parseNum,
   notes: parseText, location: parseText, station_name: parseText, charging_card: parseText,
-  charging_type: parseChargingType, placeholder2: parseText, placeholder3: parseText,
+  charging_type: parseChargingType, placeholder2: parseText, source: parseText,
 };
 const UTC_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 

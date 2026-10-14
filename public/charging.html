@@ -51,7 +51,8 @@
     <h2 style="margin:0;">Verlauf</h2>
     <div class="row">
       <div class="field"><label for="yearSel">Jahr</label><select id="yearSel"></select></div>
-      <label class="hint-txt" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="showPh" style="min-width:0;"> Platzhalter &amp; erfasst/geändert</label>
+      <div class="field wide"><label for="search">Suche (alle Jahre)</label><input id="search" placeholder="Ort, Station, Karte, Notiz, Source, Datum, Zahlen…"></div>
+      <label class="hint-txt" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="showPh" style="min-width:0;"> Platzh. 2 &amp; erfasst/geändert</label>
     </div>
   </div>
   <div class="table-wrap">
@@ -60,8 +61,8 @@
         <th>Zeitpunkt (Zürich)</th><th>Activity</th><th class="num">Odometer</th>
         <th>SoC S → E</th><th>Range S → E</th>
         <th class="num">kWh</th><th class="num">CHF</th><th class="num">CHF/kWh</th><th>Typ</th><th>Dauer</th><th class="num">°C</th>
-        <th>Ort</th><th>Station</th><th>Karte</th><th>Notiz</th>
-        <th class="ph">Platzh. 2</th><th class="ph">Platzh. 3</th><th class="ph">Erfasst (Zürich)</th><th class="ph">Geändert (Zürich)</th>
+        <th>Ort</th><th>Station</th><th>Karte</th><th>Notiz</th><th>Source</th>
+        <th class="ph">Platzh. 2</th><th class="ph">Erfasst (Zürich)</th><th class="ph">Geändert (Zürich)</th>
         <th></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
@@ -93,13 +94,22 @@ function rowHtml(r) {
     <td class="num">${fmt(r.soc_start)} → ${fmt(r.soc_end)}</td><td class="num">${fmt(r.range_start)} → ${fmt(r.range_end)}</td>
     <td class="num">${fmt(r.kwh_charged, 2)}</td><td class="num">${fmt(r.costs_chf, 2)}</td><td class="num">${fmt(perKwh, 3)}</td>
     <td>${esc(r.charging_type) || "–"}</td><td class="nowrap">${esc(r["duration_hh:mm"]) || "–"}</td><td class="num">${fmt(r.temperature, 1)}</td>
-    ${td(r.location)}${td(r.station_name)}${td(r.charging_card)}${td(r.notes)}
-    ${ph ? `<td>${esc(r.placeholder2)}</td><td>${esc(r.placeholder3)}</td><td class="nowrap">${fmtZurich(r.created_at_utc)}</td><td class="nowrap">${fmtZurich(r.modified_at_utc)}</td>` : ""}
+    ${td(r.location)}${td(r.station_name)}${td(r.charging_card)}${td(r.notes)}${td(r.source)}
+    ${ph ? `<td>${esc(r.placeholder2)}</td><td class="nowrap">${fmtZurich(r.created_at_utc)}</td><td class="nowrap">${fmtZurich(r.modified_at_utc)}</td>` : ""}
     <td class="actions"><button class="sm ghost" onclick="edit(${r.id})">Bearbeiten</button> <button class="sm ghost danger" onclick="del(${r.id})">Löschen</button></td>
   </tr>`;
 }
 
 function visible() {
+  const q = $("search").value.trim().toLowerCase();
+  if (q) {
+    const terms = q.split(/\s+/);
+    return rows.filter((r) => {
+      const hay = [fmtZurich(r.charging_date_utc), r.charging_date_utc, r.activity, r.odometer_km, r.soc_start, r.soc_end, r.range_start, r.range_end, r.kwh_charged, r.costs_chf,
+        r["duration_hh:mm"], r.temperature, r.notes, r.location, r.station_name, r.charging_card, r.charging_type, r.source, r.placeholder2].map((v) => (v ?? "")).join(" ").toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    });
+  }
   const y = $("yearSel").value;
   return rows.filter((r) => y === "all" || r.charging_date_utc.startsWith(y));
 }
@@ -179,6 +189,7 @@ $("fStation").addEventListener("change", () => {
   if (!$("fCard").value && last.charging_card) $("fCard").value = last.charging_card;
 });
 $("yearSel").addEventListener("change", render);
+$("search").addEventListener("input", render);
 $("showPh").addEventListener("change", render);
 resetForm();
 (async () => {

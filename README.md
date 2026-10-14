@@ -6,7 +6,7 @@ Dashboard für die Škoda-Enyaq-Daten (Cloudflare Worker + D1 `car`), Layout ana
 |---|---|---|
 | Dashboard | `/` | Kacheln km-Stand, SoC, Reichweite je mit Chart (7/30/90 Tage/Alles) |
 | Trips | `/trips` | Tabelle `skoda_trips_tbl`, Zeilen editierbar (Reifen: Sommer/Winter, Notiz) |
-| Charging | `/charging` | Ladevorgänge erfassen und anpassen (Tabelle `car_charging_tbl`) |
+| Charging | `/charging` | Ladevorgänge erfassen, anpassen und durchsuchen (Tabelle `car_charging_tbl`, Spalte `source`, Import: GoogleImport) |
 | Statistics | `/statistics` | km YtD vs. PYtD, Tabelle Monat / km Monat, Streudiagramm Reichweite vs. SoC (Regression, Filter Reifen/Jahr) und Ø Reichweite bei 80 % SoC, Section Battery (Kapazität aus Ladevorgängen, Regression, Filter Ladetyp/Activity/Jahr) |
 | Activities | `/activities` | Tabelle `skoda_activites_tbl` (anlegen, ändern, löschen) |
 | Collector | `/collector` | Log der Tabelle `skoda_collector_tbl` (nur lesen, Filter Zeit/Source/fehlende Werte) |
