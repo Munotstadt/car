@@ -276,18 +276,20 @@ async function handleApi(request, env, url) {
         byYm.set(r.ym, { ym: r.ym, km: Math.round(km * 10) / 10, partial: prevMax === null });
         prevMax = r.mx;
       }
-      // Ladungen je Monat (UTC) und Activity: kWh, CHF, kWh der Zeilen mit CHF (für CHF/kWh)
+      // Ladungen je Monat (UTC) und Activity: kWh und CHF (alle Zeilen, auch ohne CHF-Angabe)
       const chg = await db.prepare(
-        `SELECT substr(charging_end_date_utc, 1, 7) ym, activity, SUM(kwh_charged) kwh, SUM(costs_chf) chf,
-                SUM(CASE WHEN costs_chf IS NOT NULL THEN kwh_charged END) kwh_c
+        `SELECT substr(charging_end_date_utc, 1, 7) ym, activity, SUM(kwh_charged) kwh, SUM(costs_chf) chf
          FROM car_charging_tbl GROUP BY ym, activity`).all();
-      // SoC-Änderung im Monat: letzter SoC des Monats minus letzter SoC des Vormonats (erster Monat: minus erster SoC des Monats)
+      // SoC-Änderung im Monat: letzter SoC des Monats (aus der View car_state_v) minus letzter SoC des Vormonats
+      // (erster Monat: minus erster SoC des Monats)
       const socRows = await db.prepare(
         `SELECT ym, soc_percent, rd, ra FROM (
-           SELECT substr(collected_at_utc, 1, 7) ym, soc_percent,
-                  ROW_NUMBER() OVER (PARTITION BY substr(collected_at_utc, 1, 7) ORDER BY collected_at_utc DESC, id DESC) rd,
-                  ROW_NUMBER() OVER (PARTITION BY substr(collected_at_utc, 1, 7) ORDER BY collected_at_utc ASC, id ASC) ra
-           FROM skoda_collector_tbl WHERE soc_percent IS NOT NULL) WHERE rd = 1 OR ra = 1 ORDER BY ym`).all();
+           SELECT substr(state_time_utc, 1, 7) ym, soc_percent,
+                  ROW_NUMBER() OVER (PARTITION BY substr(state_time_utc, 1, 7)
+                    ORDER BY state_time_utc DESC, CASE WHEN kind IN ('charge_end', 'trip_end') THEN 1 ELSE 0 END DESC, ref_id DESC) rd,
+                  ROW_NUMBER() OVER (PARTITION BY substr(state_time_utc, 1, 7)
+                    ORDER BY state_time_utc ASC, CASE WHEN kind IN ('charge_end', 'trip_end') THEN 1 ELSE 0 END ASC, ref_id ASC) ra
+           FROM car_state_v WHERE soc_percent IS NOT NULL) WHERE rd = 1 OR ra = 1 ORDER BY ym`).all();
       const socM = new Map();
       for (const r of socRows.results || []) {
         const e = socM.get(r.ym) || {};
@@ -307,20 +309,20 @@ async function handleApi(request, env, url) {
       const monthly = allYm.map((ym) => {
         const base = byYm.get(ym) || { ym, km: null, partial: false };
         const c = chgM.get(ym) || {};
-        const part = (x) => ({ kwh: x?.kwh ?? null, chf: x?.chf ?? null, kwh_c: x?.kwh_c ?? null });
+        const part = (x) => ({ kwh: x?.kwh ?? null, chf: x?.chf ?? null });
         const ext = part(c.ext), home = part(c.home);
         const sum = (k) => (ext[k] === null && home[k] === null ? null : (ext[k] || 0) + (home[k] || 0));
-        const tot = { kwh: sum("kwh"), chf: sum("chf"), kwh_c: sum("kwh_c") };
-        const per = (o) => (o.chf !== null && o.kwh_c > 0 ? o.chf / o.kwh_c : null);
+        const tot = { kwh: sum("kwh"), chf: sum("chf") };
+        const per = (o) => (o.chf !== null && o.kwh > 0 ? o.chf / o.kwh : null);
         const soc = socM.get(ym);
         let socChange = null;
         if (soc) { socChange = soc.last - (prevSocLast !== null ? prevSocLast : soc.first); prevSocLast = soc.last; }
         return {
           ...base,
           soc_change: socChange,
-          ext_kwh: rnd(ext.kwh, 2), ext_chf: rnd(ext.chf, 2), ext_chf_kwh: rnd(per(ext), 3), ext_kwh_c: ext.kwh_c,
-          home_kwh: rnd(home.kwh, 2), home_chf: rnd(home.chf, 2), home_chf_kwh: rnd(per(home), 3), home_kwh_c: home.kwh_c,
-          tot_kwh: rnd(tot.kwh, 2), tot_chf: rnd(tot.chf, 2), tot_chf_kwh: rnd(per(tot), 3), tot_kwh_c: tot.kwh_c,
+          ext_kwh: rnd(ext.kwh, 2), ext_chf: rnd(ext.chf, 2), ext_chf_kwh: rnd(per(ext), 3),
+          home_kwh: rnd(home.kwh, 2), home_chf: rnd(home.chf, 2), home_chf_kwh: rnd(per(home), 3),
+          tot_kwh: rnd(tot.kwh, 2), tot_chf: rnd(tot.chf, 2), tot_chf_kwh: rnd(per(tot), 3),
           kwh100: base.km > 0 && tot.kwh !== null ? rnd((tot.kwh / base.km) * 100, 2) : null,
           chf100: base.km > 0 && tot.chf !== null ? rnd((tot.chf / base.km) * 100, 2) : null,
         };

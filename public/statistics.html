@@ -39,7 +39,7 @@
     </table>
   </div>
 
-  <div class="hint-txt">Basis: Kilometerstand und SoC aus <code>skoda_collector_tbl</code>, Ladungen aus <code>car_charging_tbl</code> (alles UTC-Monate; Ladung nach Ladeende). km Monat = höchster Stand des Monats minus höchster Stand der Vorperiode; YtD/PYtD jeweils bis zum heutigen Tag des Jahres. * = erster Monat mit Daten, nur ab erstem Messwert gerechnet. Change SoC = letzter SoC des Monats minus letzter SoC des Vormonats. CHF/kWh = CHF : kWh nur der Ladungen mit CHF-Angabe (Home-Ladungen haben meist keine CHF). kWh/100 km = Total kWh : km Monat × 100, CHF/100 km = Total CHF : km Monat × 100 (nur wenn Total vorhanden; bei fehlenden CHF-Angaben zu tief). kWh sind Netzseite inkl. Ladeverluste.</div>
+  <div class="hint-txt">Basis: Kilometerstand und SoC aus <code>skoda_collector_tbl</code>, Ladungen aus <code>car_charging_tbl</code> (alles UTC-Monate; Ladung nach Ladeende). km Monat = höchster Stand des Monats minus höchster Stand der Vorperiode; YtD/PYtD jeweils bis zum heutigen Tag des Jahres. * = erster Monat mit Daten, nur ab erstem Messwert gerechnet. Change SoC = letzter SoC des Monats minus letzter SoC des Vormonats (aus der View <code>car_state_v</code>: Collector, Trips, Ladungen, Activities). CHF/kWh = CHF : kWh aller Ladungen des Monats (auch solche ohne CHF-Angabe zählen bei den kWh mit). kWh/100 km = Total kWh : km Monat × 100, CHF/100 km = Total CHF : km Monat × 100 (nur wenn Total vorhanden). kWh sind Netzseite inkl. Ladeverluste.</div>
 
   <h2>Reichweite vs. SoC</h2>
   <div class="toolbar">
@@ -102,24 +102,24 @@ function kmFor(year, m) {
 function renderTable() {
   const y = document.getElementById("yearSel").value;
   const maxMonth = y === stats.year ? Number(stats.today.slice(5, 7)) : 12;
-  const T = { km: 0, soc: 0, ek: 0, ec: 0, ekc: 0, hk: 0, hc: 0, hkc: 0, tk: 0, tc: 0, tkc: 0, any: {} };
+  const T = { km: 0, soc: 0, ek: 0, ec: 0, hk: 0, hc: 0, tk: 0, tc: 0, any: {} };
   const add = (k, v) => { if (v !== null && v !== undefined) { T[k] += v; T.any[k] = true; } };
   const n = (v, d) => `<td class="num">${v === null || v === undefined ? "–" : fmt(v, d)}</td>`;
   let rows = "";
   for (let m = 1; m <= maxMonth; m++) {
     const r = stats.monthly.find((x) => x.ym === `${y}-${String(m).padStart(2, "0")}`) || {};
-    add("km", r.km); add("soc", r.soc_change); add("ek", r.ext_kwh); add("ec", r.ext_chf); add("ekc", r.ext_kwh_c);
-    add("hk", r.home_kwh); add("hc", r.home_chf); add("hkc", r.home_kwh_c); add("tk", r.tot_kwh); add("tc", r.tot_chf); add("tkc", r.tot_kwh_c);
+    add("km", r.km); add("soc", r.soc_change); add("ek", r.ext_kwh); add("ec", r.ext_chf);
+    add("hk", r.home_kwh); add("hc", r.home_chf); add("tk", r.tot_kwh); add("tc", r.tot_chf);
     rows += `<tr><td>${MONTHS[m - 1]}</td><td class="num">${r.km === undefined || r.km === null ? "–" : fmt(r.km, 1)}${r.partial ? " *" : ""}</td>`
       + n(r.soc_change, 0) + n(r.ext_kwh, 1) + n(r.ext_chf, 2) + n(r.ext_chf_kwh, 3) + n(r.home_kwh, 1) + n(r.home_chf, 2) + n(r.home_chf_kwh, 3)
       + n(r.tot_kwh, 1) + n(r.tot_chf, 2) + n(r.tot_chf_kwh, 3) + n(r.kwh100, 2) + n(r.chf100, 2) + `</tr>`;
   }
   const g = (k) => (T.any[k] ? T[k] : null);
-  const ratio = (c, k) => (T.any[c] && T[k] > 0 ? T[c === "ec" ? "ec" : c] / T[k] : null);
+  const ratio = (c, k) => (T.any[c] && T[k] > 0 ? T[c] / T[k] : null);
   const kwh100 = T.any.tk && T.km > 0 ? (T.tk / T.km) * 100 : null, chf100 = T.any.tc && T.km > 0 ? (T.tc / T.km) * 100 : null;
   document.getElementById("tbody").innerHTML = rows + `<tr class="total"><td>Total ${y}</td><td class="num">${T.any.km ? fmt(T.km, 1) : "–"}</td>`
-    + n(g("soc"), 0) + n(g("ek"), 1) + n(g("ec"), 2) + n(ratio("ec", "ekc"), 3) + n(g("hk"), 1) + n(g("hc"), 2) + n(ratio("hc", "hkc"), 3)
-    + n(g("tk"), 1) + n(g("tc"), 2) + n(ratio("tc", "tkc"), 3) + n(kwh100, 2) + n(chf100, 2) + `</tr>`;
+    + n(g("soc"), 0) + n(g("ek"), 1) + n(g("ec"), 2) + n(ratio("ec", "ek"), 3) + n(g("hk"), 1) + n(g("hc"), 2) + n(ratio("hc", "hk"), 3)
+    + n(g("tk"), 1) + n(g("tc"), 2) + n(ratio("tc", "tk"), 3) + n(kwh100, 2) + n(chf100, 2) + `</tr>`;
 }
 
 async function load() {
