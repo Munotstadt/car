@@ -34,6 +34,7 @@
       <div class="field"><label for="fLoc">Ort</label><input id="fLoc" list="locList" maxlength="200"></div>
       <div class="field"><label for="fStation">Ladestation</label><input id="fStation" list="stationList" maxlength="200"></div>
       <div class="field"><label for="fCard">Ladekarte</label><input id="fCard" list="cardList" maxlength="200"></div>
+      <div class="field"><label for="fSource">Source</label><input id="fSource" list="sourceList" maxlength="100"></div>
       <div class="field wide"><label for="fNotes">Notiz</label><input id="fNotes" maxlength="500"></div>
     </div>
     <div class="row" style="margin-top:12px;">
@@ -45,13 +46,14 @@
     <datalist id="cardList"></datalist>
     <datalist id="locList"></datalist>
     <datalist id="stationList"></datalist>
+    <datalist id="sourceList"></datalist>
   </div>
 
   <div class="toolbar">
     <h2 style="margin:0;">Verlauf</h2>
     <div class="row">
       <div class="field"><label for="yearSel">Jahr</label><select id="yearSel"></select></div>
-      <div class="field wide"><label for="search">Suche (alle Jahre)</label><input id="search" placeholder="Ort, Station, Karte, Notiz, Source, Datum, Zahlen…"></div>
+      <div class="field wide"><label for="search">Suche (im gewählten Jahr)</label><input id="search" placeholder="Ort, Station, Karte, Notiz, Source, Datum, Zahlen…"></div>
       <label class="hint-txt" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="showPh" style="min-width:0;"> Platzh. 2 &amp; erfasst/geändert</label>
     </div>
   </div>
@@ -81,7 +83,8 @@ const $ = (id) => document.getElementById(id);
 // Formularfeld -> DB-Spalte
 const MAP = [["fAct", "activity"], ["fOdo", "odometer_km"], ["fSocS", "start_soc_percent"], ["fSocE", "end_soc_percent"], ["fRngS", "start_range_km"], ["fRngE", "end_range_km"],
   ["fKwh", "kwh_charged"], ["fChf", "costs_chf"], ["fType", "charging_type"], ["fDur", "duration_hh:mm"], ["fTemp", "temperature_c"], ["fLoc", "location"], ["fStation", "station_name"],
-  ["fCard", "charging_card"], ["fNotes", "note"]];
+  ["fCard", "charging_card"], ["fSource", "source"], ["fNotes", "note"]];
+const DEFAULT_SOURCE = "ManualInput";
 const showPh = () => $("showPh").checked;
 const byTime = (a, b) => (a.charging_end_date_utc < b.charging_end_date_utc ? 1 : a.charging_end_date_utc > b.charging_end_date_utc ? -1 : b.id - a.id);
 
@@ -101,17 +104,17 @@ function rowHtml(r) {
 }
 
 function visible() {
-  const q = $("search").value.trim().toLowerCase();
-  if (q) {
-    const terms = q.split(/\s+/);
-    return rows.filter((r) => {
-      const hay = [fmtZurich(r.charging_end_date_utc), r.charging_end_date_utc, r.activity, r.odometer_km, r.start_soc_percent, r.end_soc_percent, r.start_range_km, r.end_range_km, r.kwh_charged, r.costs_chf,
-        r["duration_hh:mm"], r.temperature_c, r.note, r.location, r.station_name, r.charging_card, r.charging_type, r.source, r.placeholder2].map((v) => (v ?? "")).join(" ").toLowerCase();
-      return terms.every((t) => hay.includes(t));
-    });
-  }
   const y = $("yearSel").value;
-  return rows.filter((r) => y === "all" || r.charging_end_date_utc.startsWith(y));
+  const inYear = rows.filter((r) => y === "all" || r.charging_end_date_utc.startsWith(y));
+  const q = $("search").value.trim().toLowerCase();
+  if (!q) return inYear;
+  const terms = q.split(/\s+/);
+  return inYear.filter((r) => {
+    const hay = [fmtZurich(r.charging_end_date_utc), r.charging_end_date_utc, r.activity, r.odometer_km, r.start_soc_percent, r.end_soc_percent, r.start_range_km, r.end_range_km,
+      r.kwh_charged, r.costs_chf, r["duration_hh:mm"], r.temperature_c, r.note, r.location, r.station_name, r.charging_card, r.charging_type, r.source, r.placeholder2]
+      .map((v) => v ?? "").join(" ").toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  });
 }
 function render() {
   document.querySelectorAll("th.ph").forEach((th) => (th.style.display = showPh() ? "" : "none"));
@@ -119,7 +122,7 @@ function render() {
   const kwh = list.reduce((s, r) => s + (r.kwh_charged || 0), 0), chf = list.reduce((s, r) => s + (r.costs_chf || 0), 0);
   $("subline").textContent = `${list.length} Ladevorgänge · ${fmt(kwh, 1)} kWh · CHF ${fmt(chf, 2)}${kwh > 0 ? ` · Ø ${fmt(chf / kwh, 3)} CHF/kWh` : ""}`;
   $("tbody").innerHTML = list.length ? list.map(rowHtml).join("") : `<tr><td colspan="20" class="empty">Keine Ladevorgänge</td></tr>`;
-  for (const [id, col] of [["cardList", "charging_card"], ["locList", "location"], ["stationList", "station_name"]]) {
+  for (const [id, col] of [["cardList", "charging_card"], ["locList", "location"], ["stationList", "station_name"], ["sourceList", "source"]]) {
     $(id).innerHTML = [...new Set(rows.map((r) => r[col]).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de")).map((c) => `<option value="${esc(c)}">`).join("");
   }
 }
@@ -127,7 +130,7 @@ function render() {
 function resetForm() {
   editId = null;
   $("fTime").value = utcToZurichInput(nowUtcStr());
-  MAP.forEach(([id]) => { $(id).value = id === "fAct" ? "External" : ""; });
+  MAP.forEach(([id]) => { $(id).value = id === "fAct" ? "External" : id === "fSource" ? DEFAULT_SOURCE : ""; });
   $("formTitle").textContent = "Neuer Ladevorgang"; $("saveBtn").textContent = "Hinzufügen"; $("cancelBtn").style.display = "none";
   setStatus(formSt, "");
 }
