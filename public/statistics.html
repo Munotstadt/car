@@ -29,8 +29,8 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>Monat</th><th class="num">km Monat</th><th class="num">Change SoC (%)</th>
-        <th class="num">kWh External</th><th class="num">CHF External</th><th class="num">CHF/kWh External</th>
+        <th>Monat</th><th class="num">km Mte</th><th class="num">Chg. SoC (%)</th>
+        <th class="num">kWh Ext.</th><th class="num">CHF Ext.</th><th class="num">CHF/kWh Ext.</th>
         <th class="num">kWh Home</th><th class="num">CHF Home</th><th class="num">CHF/kWh Home</th>
         <th class="num">Total kWh</th><th class="num">Total CHF</th><th class="num">Total CHF/kWh</th>
         <th class="num">kWh/100 km</th><th class="num">CHF/100 km</th>
@@ -110,14 +110,14 @@ function renderTable() {
     const r = stats.monthly.find((x) => x.ym === `${y}-${String(m).padStart(2, "0")}`) || {};
     add("km", r.km); add("soc", r.soc_change); add("ek", r.ext_kwh); add("ec", r.ext_chf);
     add("hk", r.home_kwh); add("hc", r.home_chf); add("tk", r.tot_kwh); add("tc", r.tot_chf);
-    rows += `<tr><td>${MONTHS[m - 1]}</td><td class="num">${r.km === undefined || r.km === null ? "–" : fmt(r.km, 1)}${r.partial ? " *" : ""}</td>`
+    rows += `<tr><td>${MONTHS[m - 1]}</td><td class="num">${r.km === undefined || r.km === null ? "–" : fmt(r.km, 0)}${r.partial ? " *" : ""}</td>`
       + n(r.soc_change, 0) + n(r.ext_kwh, 1) + n(r.ext_chf, 2) + n(r.ext_chf_kwh, 3) + n(r.home_kwh, 1) + n(r.home_chf, 2) + n(r.home_chf_kwh, 3)
       + n(r.tot_kwh, 1) + n(r.tot_chf, 2) + n(r.tot_chf_kwh, 3) + n(r.kwh100, 2) + n(r.chf100, 2) + `</tr>`;
   }
   const g = (k) => (T.any[k] ? T[k] : null);
   const ratio = (c, k) => (T.any[c] && T[k] > 0 ? T[c] / T[k] : null);
   const kwh100 = T.any.tk && T.km > 0 ? (T.tk / T.km) * 100 : null, chf100 = T.any.tc && T.km > 0 ? (T.tc / T.km) * 100 : null;
-  document.getElementById("tbody").innerHTML = rows + `<tr class="total"><td>Total ${y}</td><td class="num">${T.any.km ? fmt(T.km, 1) : "–"}</td>`
+  document.getElementById("tbody").innerHTML = rows + `<tr class="total"><td>Total ${y}</td><td class="num">${T.any.km ? fmt(T.km, 0) : "–"}</td>`
     + n(g("soc"), 0) + n(g("ek"), 1) + n(g("ec"), 2) + n(ratio("ec", "ek"), 3) + n(g("hk"), 1) + n(g("hc"), 2) + n(ratio("hc", "hk"), 3)
     + n(g("tk"), 1) + n(g("tc"), 2) + n(ratio("tc", "tk"), 3) + n(kwh100, 2) + n(chf100, 2) + `</tr>`;
 }
