@@ -6,7 +6,7 @@ Dashboard für die Škoda-Enyaq-Daten (Cloudflare Worker + D1 `car`), Layout ana
 |---|---|---|
 | Dashboard | `/` | Kacheln km-Stand, SoC, Reichweite je mit Chart (7/30/90 Tage/Alles) |
 | Trips | `/trips` | Tabelle `skoda_trips_tbl`, Zeilen editierbar (Reifen: Sommer/Winter, Notiz) |
-| Charging | `/charging` | Ladevorgänge erfassen, anpassen und durchsuchen (Tabelle `car_charging_tbl`, Spalte `source`, Import: GoogleImport) |
+| Charging | `/charging` | Ladevorgänge erfassen, anpassen und durchsuchen (Tabelle `car_charging_tbl`, Spalte `source`, Importe: GoogleImport, Solarmanager automatisch) |
 | Zustände | `/states` | Nur Anzeige: gemeinsame Zeitreihe (Collector, Trip-/Lade-Start und -Ende, Activities) aus dem D1-View `car_state_v` |
 | Statistics | `/statistics` | km YtD vs. PYtD, Tabelle Monat / km Monat, Streudiagramm Reichweite vs. SoC (Regression, Filter Reifen/Jahr) und Ø Reichweite bei 80 % SoC, Section Battery (Kapazität aus Ladevorgängen, Regression, Filter Ladetyp/Activity/Jahr) |
 | Activities | `/activities` | Tabelle `skoda_activites_tbl` (anlegen, ändern, löschen) |
@@ -17,7 +17,7 @@ Dashboard für die Škoda-Enyaq-Daten (Cloudflare Worker + D1 `car`), Layout ana
 - `src/index.js` – Worker: JSON-API und Auslieferung von `public/`
 - `public/` – statische Seiten (HTML/CSS/JS, kein Build-Schritt)
 - `schema/d1_schema.sql` – Ergänzungen zur D1-DB (`skoda_activites_tbl`); der Worker legt sie bei Bedarf selbst an
-- `wrangler.jsonc` – Worker-Konfiguration (Custom Domain `car.munot.app`, D1-Binding `DB` → `car`)
+- `wrangler.jsonc` – Worker-Konfiguration (Custom Domain `car.munot.app`, D1-Bindings `DB` → `car`, `ENERGY_DB` → `energy`, Cron für den Solarmanager-Import)
 
 ## Login (Google-SSO via Cloudflare Access)
 
@@ -45,3 +45,14 @@ Jeder Push auf `main` deployt automatisch. `munot.app` muss als Zone im selben C
 ## Spaltennamen
 
 Einheitlich (wie Collector/Trips): `odometer_km`, `soc_percent`, `range_km` (bei Paaren mit `start_`/`end_`), `temperature_c`, `note`. Charging und Activities wurden dafür umbenannt (`ensureSchema` führt `RENAME COLUMN` idempotent aus). Collector- und Trips-Tabelle wurden nicht angefasst, da sie von einem separaten Collector beschrieben werden.
+
+## Solarmanager-Import (Home-Ladungen)
+
+Täglich um 04:17 UTC (Cron im car-Worker) werden die Tageswerte `solarmanager_data.Ladestation_kWh` aus der D1 `energy`
+der letzten 14 Tage als Home-Ladungen in `car_charging_tbl` übernommen (`source` = `Solarmanager`, Note `Tageswert Solarmanager`,
+Ladeende 10:00 UTC, AC, Kosten = kWh × `ekz_energy_prices.from_grid_CHFkWh` des Ladetags).
+
+- Tage unter 0.1 kWh werden ignoriert.
+- Bestehende Solarmanager-Zeilen: nur `kwh_charged`/`costs_chf` werden nachgeführt, manuell ergänzte Felder (SoC, km …) bleiben.
+- Gibt es am Tag oder am Folgetag schon eine Home-Ladung aus einer anderen Quelle (z.B. `ManualInput`), wird der Tag übersprungen.
+- Manuell auslösen (z.B. Nachimport): `POST /api/charging/import-solarmanager?days=N` (Antwort listet eingefügt/aktualisiert/übersprungen).
