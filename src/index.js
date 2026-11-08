@@ -448,6 +448,11 @@ async function handleApi(request, env, url) {
     }
 
     // ---- Charging ----
+    // Manueller Solarmanager-Import (sonst täglich per Cron), optional ?days=N (1–400)
+    if (path === "/api/charging/import-solarmanager" && method === "POST") {
+      const days = Math.max(1, Math.min(400, parseInt(url.searchParams.get("days") || String(SM_DEFAULT_DAYS), 10) || SM_DEFAULT_DAYS));
+      return json(await importSolarmanager(env, { days }));
+    }
     if (path === "/api/charging" && method === "GET") {
       const { results } = await db.prepare("SELECT * FROM car_charging_tbl ORDER BY charging_end_date_utc DESC, id DESC").all();
       return json({ charging: results || [] });
@@ -511,6 +516,75 @@ async function handleApi(request, env, url) {
 }
 
 /* ---------------------------------------------------------------------- *
+ * Solarmanager-Import (Home-Ladungen als Tageswerte)
+ * ---------------------------------------------------------------------- *
+ * Quelle: D1 "energy" (Binding ENERGY_DB), solarmanager_data.Ladestation_kWh je Zürcher Kalendertag,
+ * gefüllt vom collector-worker-solarmanager (täglich, rollierend über die letzten Tage).
+ * Kosten: kWh × ekz_energy_prices.from_grid_CHFkWh (gültiger Tarif am Ladetag).
+ * Regeln:
+ *  - Tage mit < 0.1 kWh werden ignoriert.
+ *  - Existiert für den Tag schon eine Solarmanager-Zeile, werden nur kwh_charged/costs_chf nachgeführt
+ *    (der Collector korrigiert die letzten Tage noch); übrige Felder (SoC, km usw.) bleiben unangetastet.
+ *  - Ist am Tag selbst oder am Folgetag bereits eine Home-Ladung aus einer anderen Quelle (z.B. ManualInput)
+ *    erfasst, wird der Tag übersprungen (über Mitternacht laufende Ladungen werden manuell oft als eine Zeile erfasst).
+ */
+const SM_SOURCE = "Solarmanager";
+const SM_NOTE = "Tageswert Solarmanager";
+const SM_MIN_KWH = 0.1;
+const SM_DEFAULT_DAYS = 14;
+
+function addDays(dateIso, n) {
+  const d = new Date(dateIso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+async function importSolarmanager(env, { days = SM_DEFAULT_DAYS } = {}) {
+  if (!env.ENERGY_DB) throw new Error("Binding ENERGY_DB fehlt");
+  const db = env.DB;
+  const to = addDays(zurichToday(), -1);
+  const from = addDays(to, -(days - 1));
+  const src = (await env.ENERGY_DB.prepare(
+    `SELECT Date_ISO, Ladestation_kWh FROM solarmanager_data
+     WHERE Date_ISO BETWEEN ? AND ? AND Ladestation_kWh >= ? ORDER BY Date_ISO`).bind(from, to, SM_MIN_KWH).all()).results || [];
+  const prices = (await env.ENERGY_DB.prepare(
+    "SELECT valid_from, valid_to, from_grid_CHFkWh FROM ekz_energy_prices WHERE from_grid_CHFkWh IS NOT NULL").all()).results || [];
+  const priceOf = (d) => prices.find((p) => p.valid_from <= d && d <= p.valid_to)?.from_grid_CHFkWh ?? null;
+  // Bestehende Home-Zeilen im Fenster (+1 Tag für die Folgetag-Regel)
+  const existing = (await db.prepare(
+    `SELECT id, substr(charging_end_date_utc, 1, 10) AS d, source, kwh_charged, costs_chf FROM car_charging_tbl
+     WHERE activity = 'Home' AND charging_end_date_utc >= ? AND charging_end_date_utc < ?`)
+    .bind(from, addDays(to, 2)).all()).results || [];
+
+  const result = { from, to, inserted: [], updated: [], skipped: [] };
+  const stmts = [];
+  for (const r of src) {
+    const d = r.Date_ISO;
+    const kwh = Math.round(r.Ladestation_kWh * 1000) / 1000;
+    const price = priceOf(d);
+    const costs = price == null ? null : Math.round(kwh * price * 100) / 100;
+    const own = existing.find((e) => e.d === d && e.source === SM_SOURCE);
+    if (own) {
+      if (own.kwh_charged !== kwh || own.costs_chf !== costs) {
+        stmts.push(db.prepare("UPDATE car_charging_tbl SET kwh_charged = ?, costs_chf = ?, modified_at_utc = datetime('now') WHERE id = ?")
+          .bind(kwh, costs, own.id));
+        result.updated.push({ date: d, kwh, costs_chf: costs });
+      }
+      continue;
+    }
+    const other = existing.find((e) => e.source !== SM_SOURCE && (e.d === d || e.d === addDays(d, 1)));
+    if (other) { result.skipped.push({ date: d, kwh, reason: `Home-Ladung id ${other.id} (${other.source ?? "ohne Source"}) vorhanden` }); continue; }
+    stmts.push(db.prepare(
+      `INSERT INTO car_charging_tbl (charging_end_date_utc, activity, kwh_charged, costs_chf, note, charging_type, source, created_at_utc)
+       VALUES (?, 'Home', ?, ?, ?, 'AC', ?, datetime('now'))`).bind(`${d} 10:00:00`, kwh, costs, SM_NOTE, SM_SOURCE));
+    result.inserted.push({ date: d, kwh, costs_chf: costs });
+  }
+  if (stmts.length) await db.batch(stmts);
+  console.log("Solarmanager-Import:", JSON.stringify(result));
+  return result;
+}
+
+/* ---------------------------------------------------------------------- *
  * Entry
  * ---------------------------------------------------------------------- */
 
@@ -520,5 +594,9 @@ export default {
     await ensureSchema(env.DB);
     if (url.pathname.startsWith("/api/")) return handleApi(request, env, url);
     return env.ASSETS.fetch(request);
+  },
+  // Cron (wrangler.jsonc): Home-Ladungen aus dem Solarmanager übernehmen
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(ensureSchema(env.DB).then(() => importSolarmanager(env)));
   },
 };

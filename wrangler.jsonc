@@ -19,12 +19,24 @@
     { "pattern": "car.munot.app", "custom_domain": true }
   ],
 
-  // D1-Datenbank "car" (Tabellen skoda_collector_tbl, skoda_trips_tbl, skoda_activites_tbl)
+  // Täglicher Solarmanager-Import der Home-Ladungen (UTC; der collector-worker-solarmanager
+  // aktualisiert solarmanager_data um ca. 01:00 UTC).
+  "triggers": {
+    "crons": ["17 4 * * *"]
+  },
+
+  // D1-Datenbank "car" (Tabellen skoda_collector_tbl, skoda_trips_tbl, skoda_activites_tbl, car_charging_tbl)
+  // und "energy" (nur lesen: solarmanager_data, ekz_energy_prices) für den Solarmanager-Import.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "car",
       "database_id": "8dcdf6f9-0ccb-4608-bb7d-90580afdc02f"
+    },
+    {
+      "binding": "ENERGY_DB",
+      "database_name": "energy",
+      "database_id": "5dfeb585-9598-41c5-a485-52d2831e4ec2"
     }
   ]
 }
